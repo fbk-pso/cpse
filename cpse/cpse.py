@@ -3,6 +3,7 @@
 from typing import IO, Callable, Optional, List, Union, Any
 import collections
 import operator
+import pprint
 
 import unified_planning as up
 import unified_planning.engines.mixins as mixins
@@ -168,6 +169,10 @@ _OPERATOR_MAP = {
     OperatorKind.AT_MOST_ONCE: None,
     # OperatorKind.DOT: None,
 }
+
+activity_type = collections.namedtuple(
+    "activity_type", "start end interval up_activity"
+)
 
 
 class CPSE(
@@ -355,10 +360,9 @@ class CPSE(
         self.add_parameters(problem.base_variables)
         for act in problem.activities:
             self.add_parameters(act.parameters)
+        print(self.model_vars)
+        print("")
 
-        activity_type = collections.namedtuple(
-            "activity_type", "start end interval up_activity"
-        )
         activities = {}
         for act in problem.activities:
             suffix = act.name
@@ -379,6 +383,9 @@ class CPSE(
             self.model_vars[str(act.start)] = (start_var, act.start)
             self.model_vars[str(act.end)] = (end_var, act.end)
 
+        print(self.model_vars)
+        print("")
+
         makespan_var = self.model.new_int_var(
             self.lower_bound, self.upper_bound, "makespan"
         )
@@ -388,6 +395,7 @@ class CPSE(
         for f in problem.fluents:
             fluent_to_capacity[f.name] = problem.fluents_defaults[f].constant_value()
 
+        # TODO: we are assuming one effect (increase or decrease) at start/end of an activity
         effect_intervals = {}
         for act in problem.activities:
             activity = activities[act.name]
@@ -428,8 +436,17 @@ class CPSE(
                     effect_intervals[fluent_name].append(
                         (activity.interval, action_effects[fluent_name]["end"])
                     )
+                    print(
+                        f"{act.name} uses",
+                        fluent_name,
+                        action_effects[fluent_name]["end"],
+                    )
+                    # TODO: when (decrease at start and increase at end) we can use the
+                    # activity interval
                 else:
                     for start_or_end, value in action_effects[fluent_name].items():
+                        print(f"{act.name} {fluent_name} at {start_or_end} += {value}")
+
                         interval_name = f"{act.name}_{fluent_name}_{start_or_end}"
                         activity_start_or_end = (
                             activity.start if start_or_end == "start" else activity.end
@@ -467,11 +484,17 @@ class CPSE(
             assert value > 0
 
             if eff.is_increase():
+                print(
+                    f"base increase effect on {fluent_name} at {start_or_end_var} += {value}"
+                )
                 fluent_to_capacity[fluent_name] += value
                 start = 0
                 end = start_or_end_var
                 duration = start_or_end_var
             elif eff.is_decrease():
+                print(
+                    f"base decrease effect on {fluent_name} at {start_or_end_var} += -{value}"
+                )
                 start = start_or_end_var
                 end = makespan_var
                 duration = self.model.new_int_var(
@@ -491,6 +514,9 @@ class CPSE(
             )
             effect_intervals[fluent_name].append((interval_var, value))
 
+        pprint.pprint(effect_intervals)
+        print("")
+
         for fluent_name in effect_intervals:
             # print(fluent_name)
             # print(effect_intervals[fluent_name])
@@ -499,7 +525,6 @@ class CPSE(
                 intervals, demands, fluent_to_capacity[fluent_name]
             )
 
-        # print(model_vars.keys())
         for fnode in problem.base_constraints:
             bool_var = self.add_constraint_rec(fnode)
             # TODO: avoid bool var for the root node
@@ -518,23 +543,21 @@ class CPSE(
                     i += 1
 
         # TODO: add support for all metrics
-        assert len(problem.quality_metrics) == 1
-        assert isinstance(problem.quality_metrics[0], MinimizeMakespan)
         for metric in problem.quality_metrics:
             if isinstance(metric, MinimizeActionCosts):
-                pass
+                raise NotImplementedError
             elif isinstance(metric, MinimizeSequentialPlanLength):
-                pass
+                raise NotImplementedError
             elif isinstance(metric, MinimizeMakespan):
                 self.model.minimize(makespan_var)
             elif isinstance(metric, MinimizeExpressionOnFinalState):
-                pass
+                raise NotImplementedError
             elif isinstance(metric, MaximizeExpressionOnFinalState):
-                pass
+                raise NotImplementedError
             elif isinstance(metric, Oversubscription):
-                pass
+                raise NotImplementedError
             elif isinstance(metric, TemporalOversubscription):
-                pass
+                raise NotImplementedError
 
         solver = cp_model.CpSolver()
         status = solver.solve(self.model)
@@ -554,17 +577,6 @@ class CPSE(
             assignment = {}
             for cp_var, up_var in self.model_vars.values():
                 assignment[up_var] = solver.value(cp_var)
-
-            for fluent_name in effect_intervals:
-                print("------------------------------")
-                print(fluent_name)
-                for interval, demand in effect_intervals[fluent_name]:
-                    print(
-                        interval.name,
-                        solver.value(interval.start_expr()),
-                        solver.value(interval.end_expr()),
-                        demand,
-                    )
 
             plan = Schedule(problem.activities, assignment, problem.environment)
 
