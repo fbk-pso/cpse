@@ -53,12 +53,28 @@ def main():
     problem.add_decrease_effect(replenishment.start, boxes, 1)
     problem.add_increase_effect(replenishment.end, boxes, 1)
 
+    problem.add_condition(
+        ClosedTimeInterval(Timing(0, box_filling.start), Timing(0, box_filling.end)),
+        LT(1, int_var),
+    )
+    # TODO: not supported
+    # problem.add_condition(
+    #     ClosedTimeInterval(box_filling.start, box_filling.end), LT(1, boxes)
+    # )
+    # box_filling.add_condition(ClosedTimeInterval(box_filling.start, box_filling.end), LT(1, int_var))
+    box_filling.add_condition(
+        ClosedTimeInterval(Timing(0, box_filling.start), Timing(0, box_filling.end)),
+        LT(1, int_var),
+    )
+
     problem.add_quality_metric(MinimizeMakespan())
 
     print(problem)
 
     # with OneshotPlanner(problem_kind=problem.kind) as planner:
-    with OneshotPlanner(name="cpse") as planner:
+    with OneshotPlanner(
+        name="cpse", params={"lower_bound": 1, "upper_bound": 100}
+    ) as planner:
         res = planner.solve(problem)
         print(res)
 

@@ -28,6 +28,7 @@ from unified_planning.model.metrics import (
 from unified_planning.model.effect import Effect
 from unified_planning.model.parameter import Parameter
 from unified_planning.model.fnode import FNode
+from unified_planning.model.timing import TimeInterval
 
 
 from ortools.sat.python import cp_model
@@ -176,6 +177,8 @@ class CPSE(
     def __init__(self, **options):
         up.engines.Engine.__init__(self)
         up.engines.mixins.OneshotPlannerMixin.__init__(self)
+
+        self.lower_bound = options.get("lower_bound", 0)
         self.upper_bound = options.get("upper_bound", cp_model.INT32_MAX)
         self.model = cp_model.CpModel()
         self.model_vars = {}
@@ -210,14 +213,18 @@ class CPSE(
 
     def new_int_var(self):
         self.int_var_counter += 1
-        return self.model.new_int_var(0, self.upper_bound, f"int{self.int_var_counter}")
+        return self.model.new_int_var(
+            self.lower_bound, self.upper_bound, f"int{self.int_var_counter}"
+        )
 
     def add_parameters(self, parameters: List[Parameter]):
         for param in parameters:
             if param.type.is_bool_type():
                 var = self.model.new_bool_var(param.name)
             elif param.type.is_int_type():
-                var = self.model.new_int_var(0, self.upper_bound, param.name)
+                var = self.model.new_int_var(
+                    self.lower_bound, self.upper_bound, param.name
+                )
             else:
                 raise NotImplementedError
 
@@ -319,6 +326,21 @@ class CPSE(
         else:
             raise NotImplementedError(f"node type {fnode.node_type} not supported")
 
+    def add_condition(self, time_interval: TimeInterval, fnode: FNode, name: str):
+        bool_var = self.add_constraint_rec(fnode)
+        # TODO: manage open intervals and fixed time intervals
+        start = self.model_vars[str(time_interval.lower)][0]
+        end = self.model_vars[str(time_interval.upper)][0]
+        duration = self.model.new_int_var(
+            self.lower_bound,
+            self.upper_bound,
+            f"{name}_duration",
+        )
+        self.model.add(duration == end - start)
+        # TODO: reuse interval if present
+        interval_var = self.model.new_interval_var(start, duration, end, name)
+        self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
+
     def _solve(
         self,
         problem: "up.model.AbstractProblem",
@@ -328,19 +350,24 @@ class CPSE(
     ) -> "up.engines.results.PlanGenerationResult":
         assert isinstance(problem, SchedulingProblem), "problem type not supported"
 
-        activity_type = collections.namedtuple(
-            "activity_type", "start end interval up_activity"
-        )
-
         self.model.name = problem.name
 
         self.add_parameters(problem.base_variables)
+        for act in problem.activities:
+            self.add_parameters(act.parameters)
 
+        activity_type = collections.namedtuple(
+            "activity_type", "start end interval up_activity"
+        )
         activities = {}
         for act in problem.activities:
             suffix = act.name
-            start_var = self.model.new_int_var(0, self.upper_bound, "start_" + suffix)
-            end_var = self.model.new_int_var(0, self.upper_bound, "end_" + suffix)
+            start_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "start_" + suffix
+            )
+            end_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "end_" + suffix
+            )
             duration = act.duration.upper.constant_value()
             interval_var = self.model.new_interval_var(
                 start_var, duration, end_var, suffix
@@ -351,9 +378,10 @@ class CPSE(
             activities[act.name] = activity
             self.model_vars[str(act.start)] = (start_var, act.start)
             self.model_vars[str(act.end)] = (end_var, act.end)
-            self.add_parameters(act.parameters)
 
-        makespan_var = self.model.new_int_var(0, self.upper_bound, "makespan")
+        makespan_var = self.model.new_int_var(
+            self.lower_bound, self.upper_bound, "makespan"
+        )
         self.model.add_max_equality(makespan_var, [a.end for a in activities.values()])
 
         fluent_to_capacity = {}
@@ -414,7 +442,7 @@ class CPSE(
                             start = activity_start_or_end
                             end = makespan_var
                             duration = self.model.new_int_var(
-                                0,
+                                self.lower_bound,
                                 self.upper_bound,
                                 f"{act.name}_{fluent_name}_{start_or_end}_duration",
                             )
@@ -447,7 +475,7 @@ class CPSE(
                 start = start_or_end_var
                 end = makespan_var
                 duration = self.model.new_int_var(
-                    0,
+                    self.lower_bound,
                     self.upper_bound,
                     f"{act.name}_{fluent_name}_{start_or_end}_duration",
                 )
@@ -476,6 +504,18 @@ class CPSE(
             bool_var = self.add_constraint_rec(fnode)
             # TODO: avoid bool var for the root node
             self.model.add_bool_and([bool_var])
+
+        for i, (time_interval, fnode) in enumerate(problem.base_conditions):
+            name = f"base_condition{i}"
+            self.add_condition(time_interval, fnode, name)
+
+        for act in problem.activities:
+            i = 0
+            for time_interval in act.conditions:
+                for fnode in act.conditions[time_interval]:
+                    name = f"{act.name}_condition{i}"
+                    self.add_condition(time_interval, fnode, name)
+                    i += 1
 
         # TODO: add support for all metrics
         assert len(problem.quality_metrics) == 1
