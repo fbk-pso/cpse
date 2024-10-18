@@ -331,6 +331,42 @@ class CPSE(
         else:
             raise NotImplementedError(f"node type {fnode.node_type} not supported")
 
+    def add_effect(self, effect, resources, activity_timepoints_assignment):
+        fluent_name = effect.fluent.fluent().name
+        value = effect.value.constant_value()
+        assert value > 0
+
+        if effect.is_decrease():
+            value = -value
+
+        for i, bool_var in enumerate(activity_timepoints_assignment):
+            if effect.is_assignment():
+                self.model.add(resources[fluent_name][i + 1] == value).only_enforce_if(
+                    bool_var
+                )
+                print(f"{bool_var} => ({resources[fluent_name][i + 1]} == {value})")
+
+            else:
+                self.model.add(
+                    resources[fluent_name][i + 1] == (resources[fluent_name][i] + value)
+                ).only_enforce_if(bool_var)
+                print(
+                    f"{bool_var} => ({resources[fluent_name][i + 1]} == {(resources[fluent_name][i] + value)})"
+                )
+
+    def all_tpi_with_effects_on_fluent(
+        self, tpi, fluent_name, problem, activity_timepoints_assignment
+    ):
+        for act in problem.activities:
+            for timing, effects in act.effects.items():
+                for eff in effects:
+                    if eff.fluent.fluent().name == fluent_name:
+                        yield activity_timepoints_assignment[str(timing)][tpi]
+
+        for timing, eff in problem.base_effects:
+            if eff.fluent.fluent().name == fluent_name:
+                yield activity_timepoints_assignment[str(timing)][tpi]
+
     def add_condition(self, time_interval: TimeInterval, fnode: FNode, name: str):
         bool_var = self.add_constraint_rec(fnode)
         # TODO: manage open intervals and fixed time intervals
@@ -341,7 +377,7 @@ class CPSE(
             self.upper_bound,
             f"{name}_duration",
         )
-        self.model.add(duration == end - start)
+        self.model.add(duration == (end - start))
         # TODO: reuse interval if present
         interval_var = self.model.new_interval_var(start, duration, end, name)
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
@@ -391,139 +427,120 @@ class CPSE(
         )
         self.model.add_max_equality(makespan_var, [a.end for a in activities.values()])
 
-        fluent_to_capacity = {}
-        for f in problem.fluents:
-            fluent_to_capacity[f.name] = problem.fluents_defaults[f].constant_value()
+        timepoints = [
+            self.model.new_int_var(self.lower_bound, self.upper_bound, f"timepoint{i}")
+            for i in range(len(problem.activities) * 2)
+        ]
+        # TODO: we assume timepoints are all different
+        for i in range(len(timepoints) - 1):
+            self.model.add(timepoints[i] < timepoints[i + 1])
+            print(f"{timepoints[i]} < {timepoints[i + 1]}")
 
-        # TODO: we are assuming one effect (increase or decrease) at start/end of an activity
-        effect_intervals = {}
+        activity_timepoints = []
+        for activity in activities.values():
+            activity_timepoints.append((activity.up_activity.start, activity.start))
+            activity_timepoints.append((activity.up_activity.end, activity.end))
+        activity_timepoints_assignment = {}
+        all_condition_vars = []  # TODO: remove
+        for i in range(len(activity_timepoints)):
+            up_tp_i, activity_timepoint_i = activity_timepoints[i]
+            condition_vars = []
+            for j in range(len(activity_timepoints)):
+                if i == j:
+                    continue
+
+                up_tp_j, activity_timepoint_j = activity_timepoints[j]
+                condition_bool_var = self.new_bool_var()
+                condition_vars.append(condition_bool_var)
+                all_condition_vars.append(condition_bool_var)
+                # self.model.add(
+                #     (activity_timepoint_i > activity_timepoint_j) == condition_bool_var
+                # )
+                self.model.add(
+                    activity_timepoint_i > activity_timepoint_j
+                ).only_enforce_if(condition_bool_var)
+                print(
+                    f"{condition_bool_var} => ({activity_timepoint_i} > {activity_timepoint_j})"
+                )
+
+            activity_timepoints_assignment[str(up_tp_i)] = []
+            for idx, tp in enumerate(timepoints):
+                # if tp is idx-th <=> (tp_i == activity_timepoint_i)
+                # self.model.add((sum(condition_vars) == idx) == (tp == activity_timepoint_i))
+                # self.model.add((sum(condition_vars) == idx) == bool_var)
+                # self.model.add((tp == activity_timepoint_i) == bool_var)
+
+                bool_var = self.model.new_bool_var(f"{activity_timepoint_i}@{tp}")
+                activity_timepoints_assignment[str(up_tp_i)].append(bool_var)
+                self.model.add(sum(condition_vars) == idx).only_enforce_if(bool_var)
+                self.model.add(tp == activity_timepoint_i).only_enforce_if(bool_var)
+                print(f"{bool_var} => ({sum(condition_vars)} == {idx})")
+                print(f"{bool_var} => ({tp} == {activity_timepoint_i})")
+
+            # each activity timepoint is assigned to exactly one timepoint
+            print(f"exactly_one({activity_timepoints_assignment[str(up_tp_i)]})")
+            self.model.add_exactly_one(activity_timepoints_assignment[str(up_tp_i)])
+
+        # each timepoint is assigned to exactly one activity timepoint
+        for i in range(len(timepoints)):
+            self.model.add_exactly_one(
+                bool_vars[i] for bool_vars in activity_timepoints_assignment.values()
+            )
+
+        # (num resources) x (num timepoints + 1)
+        resources = {}
+        for fluent in problem.fluents:
+            init_value = self.model.new_constant(
+                problem.fluents_defaults[fluent].constant_value()
+            )
+            resources[fluent.name] = [init_value]
+            for i in range(len(timepoints)):
+                resource_var = self.model.new_int_var(
+                    0,
+                    problem.fluents_defaults[fluent].constant_value(),
+                    f"{fluent.name}@{timepoints[i]}",
+                )
+                resources[fluent.name].append(resource_var)
+
+        # TODO: we assume maximum one effect (increase or decrease) at start and/or
+        # end of each activity
         for act in problem.activities:
             activity = activities[act.name]
-            action_effects = {}
             for timing, effects in act.effects.items():
-                start_or_end = "start" if timing.is_from_start() else "end"
                 for eff in effects:
-                    eff: Effect
-                    fluent_name = eff.fluent.fluent().name
-                    value = eff.value.constant_value()
-                    assert value > 0
-
-                    if eff.is_increase():
-                        fluent_to_capacity[fluent_name] += value
-                    elif eff.is_decrease():
-                        value = -value
-                    else:
-                        raise NotImplementedError
-
-                    if fluent_name in action_effects:
-                        assert start_or_end not in action_effects[fluent_name]
-                        action_effects[fluent_name][start_or_end] = value
-                    else:
-                        action_effects[fluent_name] = {start_or_end: value}
-
-            for fluent_name in action_effects:
-                if fluent_name not in effect_intervals:
-                    effect_intervals[fluent_name] = []
-
-                if (
-                    "start" in action_effects[fluent_name]
-                    and "end" in action_effects[fluent_name]
-                    and action_effects[fluent_name]["start"] < 0
-                    and action_effects[fluent_name]["start"]
-                    == -action_effects[fluent_name]["end"]
-                ):
-                    # use a resource
-                    effect_intervals[fluent_name].append(
-                        (activity.interval, action_effects[fluent_name]["end"])
+                    self.add_effect(
+                        eff,
+                        resources,
+                        activity_timepoints_assignment[str(timing)],
                     )
-                    print(
-                        f"{act.name} uses",
-                        fluent_name,
-                        action_effects[fluent_name]["end"],
-                    )
-                    # TODO: when (decrease at start and increase at end) we can use the
-                    # activity interval
-                else:
-                    for start_or_end, value in action_effects[fluent_name].items():
-                        print(f"{act.name} {fluent_name} at {start_or_end} += {value}")
-
-                        interval_name = f"{act.name}_{fluent_name}_{start_or_end}"
-                        activity_start_or_end = (
-                            activity.start if start_or_end == "start" else activity.end
-                        )
-                        if value > 0:
-                            start = 0
-                            end = activity_start_or_end
-                            duration = activity_start_or_end
-                        else:
-                            start = activity_start_or_end
-                            end = makespan_var
-                            duration = self.model.new_int_var(
-                                self.lower_bound,
-                                self.upper_bound,
-                                f"{act.name}_{fluent_name}_{start_or_end}_duration",
-                            )
-                            self.model.add(
-                                duration == makespan_var - activity_start_or_end
-                            )
-
-                        interval_var = self.model.new_interval_var(
-                            start,
-                            duration,
-                            end,
-                            interval_name,
-                        )
-                        effect_intervals[fluent_name].append((interval_var, abs(value)))
 
         for i, (timing, eff) in enumerate(problem.base_effects):
             assert str(timing) in self.model_vars
-            start_or_end_var = self.model_vars[str(timing)][0]
-            fluent_name = eff.fluent.fluent().name
-            value = eff.value.constant_value()
-            interval_name = f"base_effect{i}"
-            assert value > 0
-
-            if eff.is_increase():
-                print(
-                    f"base increase effect on {fluent_name} at {start_or_end_var} += {value}"
-                )
-                fluent_to_capacity[fluent_name] += value
-                start = 0
-                end = start_or_end_var
-                duration = start_or_end_var
-            elif eff.is_decrease():
-                print(
-                    f"base decrease effect on {fluent_name} at {start_or_end_var} += -{value}"
-                )
-                start = start_or_end_var
-                end = makespan_var
-                duration = self.model.new_int_var(
-                    self.lower_bound,
-                    self.upper_bound,
-                    f"{act.name}_{fluent_name}_{start_or_end}_duration",
-                )
-                self.model.add(duration == makespan_var - activity_start_or_end)
-            else:
-                raise NotImplementedError
-
-            interval_var = self.model.new_interval_var(
-                start,
-                duration,
-                end,
-                interval_name,
+            self.add_effect(
+                eff,
+                resources,
+                activity_timepoints_assignment[str(timing)],
             )
-            effect_intervals[fluent_name].append((interval_var, value))
 
-        pprint.pprint(effect_intervals)
-        print("")
-
-        for fluent_name in effect_intervals:
-            # print(fluent_name)
-            # print(effect_intervals[fluent_name])
-            intervals, demands = list(zip(*effect_intervals[fluent_name]))
-            self.model.add_cumulative(
-                intervals, demands, fluent_to_capacity[fluent_name]
-            )
+        # for each resource
+        #   for each timepoint
+        #       if no activities have effects on that resource at that timepoint
+        #           resource@tp(i) == resource@tp(i-1)
+        for fluent_name in resources:
+            for i, tp in enumerate(timepoints):
+                activity_tps = list(
+                    self.all_tpi_with_effects_on_fluent(
+                        i, fluent_name, problem, activity_timepoints_assignment
+                    )
+                )
+                bool_var = self.new_bool_var()
+                self.model.add(
+                    resources[fluent_name][i + 1] == resources[fluent_name][i]
+                ).only_enforce_if(bool_var)
+                self.model.add_bool_or(activity_tps + [bool_var])
+                print(
+                    f"or({activity_tps}) or ({resources[fluent_name][i + 1]} == {resources[fluent_name][i]})"
+                )
 
         for fnode in problem.base_constraints:
             bool_var = self.add_constraint_rec(fnode)
@@ -574,6 +591,24 @@ class CPSE(
                 f"{'Optimal' if status == cp_model.OPTIMAL else 'Feasible'} solution found."
             )
             print(f"Objective: {solver.objective_value}")
+            print("")
+
+            for vv in activity_timepoints_assignment.values():
+                for var in vv:
+                    print(var, solver.value(var))
+            for var in all_condition_vars:
+                print(var, solver.value(var))
+            for var in timepoints:
+                print(var, solver.value(var))
+            for _, var in activity_timepoints:
+                print(var, solver.value(var))
+            for name, rr in resources.items():
+                print(name)
+                for var in rr:
+                    print(var, solver.value(var))
+
+            print("")
+
             assignment = {}
             for cp_var, up_var in self.model_vars.values():
                 assignment[up_var] = solver.value(cp_var)

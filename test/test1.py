@@ -21,9 +21,9 @@ def main():
 
     box_construction = problem.add_activity(
         f"box_construction",
-        duration=3,
+        duration=4,
     )
-    box_construction.uses(machines, amount=2)
+    box_construction.uses(machines, amount=1)
     box_construction.uses(operators, amount=1)
     box_construction.add_decrease_effect(box_construction.start, boxes, 1)
     box_construction.add_increase_effect(box_construction.end, boxes, 1)
@@ -32,14 +32,15 @@ def main():
     box_filling.uses(operators, amount=1)
     box_filling.add_increase_effect(box_filling.start, boxes, 1)
     box_filling.add_decrease_effect(box_filling.end, boxes, 1)
-    problem.add_constraint(
-        # Or(
-        #     LE(box_construction.end, box_filling.start),
-        #     LE(box_construction.start, box_filling.end),
-        # )
-        # LE(box_construction.end, box_filling.start)
-        LE(Plus(box_construction.end, +1), box_filling.start),
-    )
+    box_filling.add_effect(box_filling.end, machines, 2)
+    # problem.add_constraint(
+    #     # Or(
+    #     #     LE(box_construction.end, box_filling.start),
+    #     #     LE(box_construction.start, box_filling.end),
+    #     # )
+    #     # LE(box_construction.end, box_filling.start)
+    #     LE(Plus(box_construction.end, +1), box_filling.start),
+    # )
 
     replenishment = problem.add_activity(
         f"replenishment",
@@ -52,6 +53,11 @@ def main():
     )
     problem.add_decrease_effect(replenishment.start, boxes, 1)
     problem.add_increase_effect(replenishment.end, boxes, 1)
+    problem.add_effect(replenishment.end, operators, 2)
+
+    # TODO: not supported
+    # fluent field of add_increase_effect must be a Fluent or a FluentExp
+    # problem.add_increase_effect(replenishment.end, int_var, 1)
 
     problem.add_condition(
         ClosedTimeInterval(Timing(0, box_filling.start), Timing(0, box_filling.end)),
@@ -73,7 +79,7 @@ def main():
 
     # with OneshotPlanner(problem_kind=problem.kind) as planner:
     with OneshotPlanner(
-        name="cpse", params={"lower_bound": 1, "upper_bound": 100}
+        name="cpse", params={"lower_bound": 0, "upper_bound": 100}
     ) as planner:
         res = planner.solve(problem)
         print(res)
