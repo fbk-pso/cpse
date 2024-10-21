@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unified Planning Integration for OR-Tools CP-SAT Model"""
-from typing import IO, Callable, Optional, List, Union, Any
+from typing import IO, Callable, Optional, List, Union, Any, Dict
 import collections
 import operator
 import pprint
@@ -13,7 +13,7 @@ from unified_planning.engines import (
     PlanGenerationResult,
     PlanGenerationResultStatus,
 )
-from unified_planning.model.scheduling import SchedulingProblem
+from unified_planning.model.scheduling import SchedulingProblem, Activity
 from unified_planning.engines.mixins.oneshot_planner import OptimalityGuarantee
 from unified_planning.plans import Schedule
 from unified_planning.model.operators import OperatorKind
@@ -186,6 +186,8 @@ class CPSE(
         self.lower_bound = options.get("lower_bound", 0)
         self.upper_bound = options.get("upper_bound", cp_model.INT32_MAX)
         self.model = cp_model.CpModel()
+
+        self.activities = {}
         self.model_vars = {}
 
     @property
@@ -213,16 +215,20 @@ class CPSE(
     int_var_counter = -1
 
     def new_bool_var(self):
+        """Add a new anonymous boolean variable to the model"""
         self.bool_var_counter += 1
         return self.model.new_bool_var(f"bool{self.bool_var_counter}")
 
     def new_int_var(self):
+        """Add a new anonymous integer variable to the model"""
         self.int_var_counter += 1
         return self.model.new_int_var(
             self.lower_bound, self.upper_bound, f"int{self.int_var_counter}"
         )
 
     def add_parameters(self, parameters: List[Parameter]):
+        """Add the parameters to the model as boolean or integer variables"""
+
         for param in parameters:
             if param.type.is_bool_type():
                 var = self.model.new_bool_var(param.name)
@@ -236,18 +242,189 @@ class CPSE(
             # TODO: check if name duplicated
             self.model_vars[param.name] = (var, param)
 
+    def add_activity(self, activity: Activity):
+        """Add an activity to the model. Each activity is modeled using an interval."""
+
+        start_var = self.model.new_int_var(
+            self.lower_bound, self.upper_bound, "start_" + activity.name
+        )
+        end_var = self.model.new_int_var(
+            self.lower_bound, self.upper_bound, "end_" + activity.name
+        )
+        duration = activity.duration.upper.constant_value()
+        interval_var = self.model.new_interval_var(
+            start_var, duration, end_var, activity.name
+        )
+        self.activities[activity.name] = activity_type(
+            start=start_var, end=end_var, interval=interval_var, up_activity=activity
+        )
+        self.model_vars[str(activity.start)] = (start_var, activity.start)
+        self.model_vars[str(activity.end)] = (end_var, activity.end)
+
+    def add_effect_intervals(
+        self, problem: SchedulingProblem, makespan_var
+    ) -> Dict[str, List]:
+        """Process all the effects (activity effects and problem effects) and add
+        their support intervals to the model.
+
+        If an activity has two effects on the same fluent — a decrease effect
+        followed by an increase effect — the support interval is not created.
+        Instead, the activity interval is used.
+
+        Also updates `fluent_to_capacity` when an increase effect is present.
+        """
+
+        # TODO: Assuming only one effect (increase or decrease) at the start and/or
+        # end of an activity. If multiple effects occur at the same timepoint, they
+        # can be simplified to a single effect.
+
+        effect_intervals: Dict[str, List] = {}
+        for act in problem.activities:
+            activity = self.activities[act.name]
+            action_effects = {}
+            for timing, effects in act.effects.items():
+                start_or_end = "start" if timing.is_from_start() else "end"
+                for eff in effects:
+                    eff: Effect
+                    fluent_name = eff.fluent.fluent().name
+                    value = eff.value.constant_value()
+                    assert value > 0
+
+                    if eff.is_increase():
+                        pass
+                    elif eff.is_decrease():
+                        value = -value
+                    else:
+                        raise NotImplementedError
+
+                    if fluent_name in action_effects:
+                        # TODO: remove assumption
+                        assert start_or_end not in action_effects[fluent_name]
+                        action_effects[fluent_name][start_or_end] = value
+                    else:
+                        action_effects[fluent_name] = {start_or_end: value}
+
+            for fluent_name in action_effects:
+                if fluent_name not in effect_intervals:
+                    effect_intervals[fluent_name] = []
+
+                if (
+                    "start" in action_effects[fluent_name]
+                    and "end" in action_effects[fluent_name]
+                    and action_effects[fluent_name]["start"] < 0
+                    and action_effects[fluent_name]["start"]
+                    == -action_effects[fluent_name]["end"]
+                ):
+                    # use a resource
+                    effect_intervals[fluent_name].append(
+                        (activity.interval, action_effects[fluent_name]["end"])
+                    )
+                    print(
+                        f"{act.name} uses",
+                        fluent_name,
+                        action_effects[fluent_name]["end"],
+                    )
+                    # TODO: when (decrease at start and increase at end) we can use the
+                    # activity interval
+                else:
+                    for start_or_end, value in action_effects[fluent_name].items():
+                        print(f"{act.name} {fluent_name} at {start_or_end} += {value}")
+
+                        activity_start_or_end = (
+                            activity.start if start_or_end == "start" else activity.end
+                        )
+                        if value > 0:
+                            interval_name = (
+                                f"{act.name}_increase_{fluent_name}@{start_or_end}"
+                            )
+                            start = 0
+                            end = activity_start_or_end
+                            duration = activity_start_or_end
+                            self.fluent_to_capacity[fluent_name] += value
+                        else:
+                            interval_name = (
+                                f"{act.name}_decrease_{fluent_name}@{start_or_end}"
+                            )
+                            start = activity_start_or_end
+                            end = makespan_var  # TODO: better to use upper bound?
+                            duration = self.model.new_int_var(
+                                self.lower_bound,
+                                self.upper_bound,
+                                f"{act.name}_{fluent_name}_{start_or_end}_duration",
+                            )
+                            self.model.add(
+                                duration == (makespan_var - activity_start_or_end)
+                            )
+
+                        interval_var = self.model.new_interval_var(
+                            start,
+                            duration,
+                            end,
+                            interval_name,
+                        )
+                        effect_intervals[fluent_name].append((interval_var, abs(value)))
+
+        for i, (timing, eff) in enumerate(problem.base_effects):
+            assert str(timing) in self.model_vars
+            start_or_end_var = self.model_vars[str(timing)][0]
+            fluent_name = eff.fluent.fluent().name
+            value = eff.value.constant_value()
+            assert value > 0
+
+            if eff.is_increase():
+                interval_name = f"base_effect{i}_increase_{fluent_name}@{timing}"
+                print(
+                    f"base increase effect on {fluent_name} at {start_or_end_var} += {value}"
+                )
+                self.fluent_to_capacity[fluent_name] += value
+                start = 0
+                end = start_or_end_var
+                duration = start_or_end_var
+            elif eff.is_decrease():
+                interval_name = f"base_effect{i}_decrease_{fluent_name}@{timing}"
+                print(
+                    f"base decrease effect on {fluent_name} at {start_or_end_var} += -{value}"
+                )
+                start = start_or_end_var
+                end = makespan_var  # TODO: better to use upper bound?
+                duration = self.model.new_int_var(
+                    self.lower_bound,
+                    self.upper_bound,
+                    f"{interval_name}_duration",
+                )
+                self.model.add(duration == (makespan_var - activity_start_or_end))
+            else:
+                raise NotImplementedError
+
+            interval_var = self.model.new_interval_var(
+                start,
+                duration,
+                end,
+                interval_name,
+            )
+            effect_intervals[fluent_name].append((interval_var, value))
+
+        # add a cumulative constraint for each fluent
+        for fluent_name in effect_intervals:
+            intervals, demands = list(zip(*effect_intervals[fluent_name]))
+            self.model.add_cumulative(
+                intervals, demands, self.fluent_to_capacity[fluent_name]
+            )
+
+        return effect_intervals
+
     def add_constraint_rec(
         self, fnode: FNode
     ) -> Union[cp_model.IntVar, bool, int, Any]:
+        """Recursively add the constraint (represented by the fnode) to the model"""
+
         if fnode.is_parameter_exp():
             return self.model_vars[fnode.parameter().name][0]
 
         elif fnode.is_timing_exp():
-            # print(fnode.timing().timepoint)
             return self.model_vars[str(fnode.timing().timepoint)][0]
 
         elif fnode.is_constant():
-            # print(fnode.constant_value())
             return fnode.constant_value()
 
         elif fnode.node_type in [
@@ -257,7 +434,6 @@ class CPSE(
             OperatorKind.DIV,
         ]:
             op = _OPERATOR_MAP[fnode.node_type]
-            # print(op)
             args = [self.add_constraint_rec(arg) for arg in fnode.args]
             return op(*args)
 
@@ -274,8 +450,6 @@ class CPSE(
         #     return int_var
 
         elif fnode.node_type == OperatorKind.NOT:
-            # print("not")
-            # print(fnode.args)
             return self.add_constraint_rec(fnode.args[0]).negated()
 
         elif fnode.node_type in [
@@ -285,8 +459,6 @@ class CPSE(
             OperatorKind.IFF,
             OperatorKind.AT_MOST_ONCE,
         ]:
-            # print(fnode.node_type)
-            # print(fnode.args)
             bool_vars = []
             for arg in fnode.args:
                 bool_vars.append(self.add_constraint_rec(arg))
@@ -321,17 +493,25 @@ class CPSE(
             OperatorKind.EQUALS,
         ]:
             op = _OPERATOR_MAP[fnode.node_type]
-            # print(op)
             args = [self.add_constraint_rec(arg) for arg in fnode.args]
             bool_var = self.new_bool_var()
             self.model.add(op(*args)).only_enforce_if(bool_var)
-            # print(op(*args))
             return bool_var
 
         else:
             raise NotImplementedError(f"node type {fnode.node_type} not supported")
 
+    def add_constraints(self, problem: SchedulingProblem):
+        """Add the problem constraints to the model"""
+
+        for fnode in problem.base_constraints:
+            bool_var = self.add_constraint_rec(fnode)
+            # TODO: avoid bool var for the root node
+            self.model.add_bool_and([bool_var])
+
     def add_condition(self, time_interval: TimeInterval, fnode: FNode, name: str):
+        """Add a condition to the model"""
+
         bool_var = self.add_constraint_rec(fnode)
         # TODO: manage open intervals and fixed time intervals
         start = self.model_vars[str(time_interval.lower)][0]
@@ -341,194 +521,13 @@ class CPSE(
             self.upper_bound,
             f"{name}_duration",
         )
-        self.model.add(duration == end - start)
+        self.model.add(duration == (end - start))
         # TODO: reuse interval if present
         interval_var = self.model.new_interval_var(start, duration, end, name)
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
 
-    def _solve(
-        self,
-        problem: "up.model.AbstractProblem",
-        heuristic: Optional[Callable[["up.model.state.State"], Optional[float]]] = None,
-        timeout: Optional[float] = None,
-        output_stream: Optional[IO[str]] = None,
-    ) -> "up.engines.results.PlanGenerationResult":
-        assert isinstance(problem, SchedulingProblem), "problem type not supported"
-
-        self.model.name = problem.name
-
-        self.add_parameters(problem.base_variables)
-        for act in problem.activities:
-            self.add_parameters(act.parameters)
-        print(self.model_vars)
-        print("")
-
-        activities = {}
-        for act in problem.activities:
-            suffix = act.name
-            start_var = self.model.new_int_var(
-                self.lower_bound, self.upper_bound, "start_" + suffix
-            )
-            end_var = self.model.new_int_var(
-                self.lower_bound, self.upper_bound, "end_" + suffix
-            )
-            duration = act.duration.upper.constant_value()
-            interval_var = self.model.new_interval_var(
-                start_var, duration, end_var, suffix
-            )
-            activity = activity_type(
-                start=start_var, end=end_var, interval=interval_var, up_activity=act
-            )
-            activities[act.name] = activity
-            self.model_vars[str(act.start)] = (start_var, act.start)
-            self.model_vars[str(act.end)] = (end_var, act.end)
-
-        print(self.model_vars)
-        print("")
-
-        makespan_var = self.model.new_int_var(
-            self.lower_bound, self.upper_bound, "makespan"
-        )
-        self.model.add_max_equality(makespan_var, [a.end for a in activities.values()])
-
-        fluent_to_capacity = {}
-        for f in problem.fluents:
-            fluent_to_capacity[f.name] = problem.fluents_defaults[f].constant_value()
-
-        # TODO: we are assuming one effect (increase or decrease) at start/end of an activity
-        effect_intervals = {}
-        for act in problem.activities:
-            activity = activities[act.name]
-            action_effects = {}
-            for timing, effects in act.effects.items():
-                start_or_end = "start" if timing.is_from_start() else "end"
-                for eff in effects:
-                    eff: Effect
-                    fluent_name = eff.fluent.fluent().name
-                    value = eff.value.constant_value()
-                    assert value > 0
-
-                    if eff.is_increase():
-                        fluent_to_capacity[fluent_name] += value
-                    elif eff.is_decrease():
-                        value = -value
-                    else:
-                        raise NotImplementedError
-
-                    if fluent_name in action_effects:
-                        assert start_or_end not in action_effects[fluent_name]
-                        action_effects[fluent_name][start_or_end] = value
-                    else:
-                        action_effects[fluent_name] = {start_or_end: value}
-
-            for fluent_name in action_effects:
-                if fluent_name not in effect_intervals:
-                    effect_intervals[fluent_name] = []
-
-                if (
-                    "start" in action_effects[fluent_name]
-                    and "end" in action_effects[fluent_name]
-                    and action_effects[fluent_name]["start"] < 0
-                    and action_effects[fluent_name]["start"]
-                    == -action_effects[fluent_name]["end"]
-                ):
-                    # use a resource
-                    effect_intervals[fluent_name].append(
-                        (activity.interval, action_effects[fluent_name]["end"])
-                    )
-                    print(
-                        f"{act.name} uses",
-                        fluent_name,
-                        action_effects[fluent_name]["end"],
-                    )
-                    # TODO: when (decrease at start and increase at end) we can use the
-                    # activity interval
-                else:
-                    for start_or_end, value in action_effects[fluent_name].items():
-                        print(f"{act.name} {fluent_name} at {start_or_end} += {value}")
-
-                        interval_name = f"{act.name}_{fluent_name}_{start_or_end}"
-                        activity_start_or_end = (
-                            activity.start if start_or_end == "start" else activity.end
-                        )
-                        if value > 0:
-                            start = 0
-                            end = activity_start_or_end
-                            duration = activity_start_or_end
-                        else:
-                            start = activity_start_or_end
-                            end = makespan_var
-                            duration = self.model.new_int_var(
-                                self.lower_bound,
-                                self.upper_bound,
-                                f"{act.name}_{fluent_name}_{start_or_end}_duration",
-                            )
-                            self.model.add(
-                                duration == makespan_var - activity_start_or_end
-                            )
-
-                        interval_var = self.model.new_interval_var(
-                            start,
-                            duration,
-                            end,
-                            interval_name,
-                        )
-                        effect_intervals[fluent_name].append((interval_var, abs(value)))
-
-        for i, (timing, eff) in enumerate(problem.base_effects):
-            assert str(timing) in self.model_vars
-            start_or_end_var = self.model_vars[str(timing)][0]
-            fluent_name = eff.fluent.fluent().name
-            value = eff.value.constant_value()
-            interval_name = f"base_effect{i}"
-            assert value > 0
-
-            if eff.is_increase():
-                print(
-                    f"base increase effect on {fluent_name} at {start_or_end_var} += {value}"
-                )
-                fluent_to_capacity[fluent_name] += value
-                start = 0
-                end = start_or_end_var
-                duration = start_or_end_var
-            elif eff.is_decrease():
-                print(
-                    f"base decrease effect on {fluent_name} at {start_or_end_var} += -{value}"
-                )
-                start = start_or_end_var
-                end = makespan_var
-                duration = self.model.new_int_var(
-                    self.lower_bound,
-                    self.upper_bound,
-                    f"{act.name}_{fluent_name}_{start_or_end}_duration",
-                )
-                self.model.add(duration == makespan_var - activity_start_or_end)
-            else:
-                raise NotImplementedError
-
-            interval_var = self.model.new_interval_var(
-                start,
-                duration,
-                end,
-                interval_name,
-            )
-            effect_intervals[fluent_name].append((interval_var, value))
-
-        pprint.pprint(effect_intervals)
-        print("")
-
-        for fluent_name in effect_intervals:
-            # print(fluent_name)
-            # print(effect_intervals[fluent_name])
-            intervals, demands = list(zip(*effect_intervals[fluent_name]))
-            self.model.add_cumulative(
-                intervals, demands, fluent_to_capacity[fluent_name]
-            )
-
-        for fnode in problem.base_constraints:
-            bool_var = self.add_constraint_rec(fnode)
-            # TODO: avoid bool var for the root node
-            self.model.add_bool_and([bool_var])
+    def add_conditions(self, problem: SchedulingProblem):
+        """Add the conditions defined in the problem and the activities to the model"""
 
         for i, (time_interval, fnode) in enumerate(problem.base_conditions):
             name = f"base_condition{i}"
@@ -541,6 +540,9 @@ class CPSE(
                     name = f"{act.name}_condition{i}"
                     self.add_condition(time_interval, fnode, name)
                     i += 1
+
+    def add_quality_metrics(self, problem: SchedulingProblem, makespan_var):
+        """Add the quality metrics to the model"""
 
         # TODO: add support for all metrics
         for metric in problem.quality_metrics:
@@ -559,6 +561,53 @@ class CPSE(
             elif isinstance(metric, TemporalOversubscription):
                 raise NotImplementedError
 
+    def _solve(
+        self,
+        problem: "up.model.AbstractProblem",
+        heuristic: Optional[Callable[["up.model.state.State"], Optional[float]]] = None,
+        timeout: Optional[float] = None,
+        output_stream: Optional[IO[str]] = None,
+    ) -> "up.engines.results.PlanGenerationResult":
+        assert isinstance(problem, SchedulingProblem), "problem type not supported"
+
+        self.model.name = problem.name
+
+        # add the parameters of the problem to the model
+        self.add_parameters(problem.base_variables)
+        # add the parameters of the activities to the model
+        for up_activity in problem.activities:
+            self.add_parameters(up_activity.parameters)
+
+        # add the activities to the model
+        for up_activity in problem.activities:
+            self.add_activity(up_activity)
+
+        # define the makespan variable
+        makespan_var = self.model.new_int_var(
+            self.lower_bound, self.upper_bound, "makespan"
+        )
+        self.model.add_max_equality(
+            makespan_var, [a.end for a in self.activities.values()]
+        )
+
+        # map each fluent to its maximum capacity
+        self.fluent_to_capacity = {}
+        for f in problem.fluents:
+            self.fluent_to_capacity[f.name] = problem.fluents_defaults[
+                f
+            ].constant_value()
+
+        effect_intervals = self.add_effect_intervals(problem, makespan_var)
+
+        print("fluent_to_capacity", self.fluent_to_capacity)
+        pprint.pprint(effect_intervals)
+        print("")
+
+        self.add_constraints(problem)
+        self.add_conditions(problem)
+
+        self.add_quality_metrics(problem, makespan_var)
+
         solver = cp_model.CpSolver()
         status = solver.solve(self.model)
 
@@ -574,6 +623,22 @@ class CPSE(
                 f"{'Optimal' if status == cp_model.OPTIMAL else 'Feasible'} solution found."
             )
             print(f"Objective: {solver.objective_value}")
+            print()
+
+            for name in self.model_vars:
+                print(self.model_vars[name][0], solver.value(self.model_vars[name][0]))
+
+            print()
+            for fluent_name in effect_intervals:
+                for interval_var, value in effect_intervals[fluent_name]:
+                    print(
+                        interval_var,
+                        solver.value(interval_var.start_expr()),
+                        solver.value(interval_var.end_expr()),
+                    )
+
+            print()
+
             assignment = {}
             for cp_var, up_var in self.model_vars.values():
                 assignment[up_var] = solver.value(cp_var)
