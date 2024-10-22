@@ -29,13 +29,13 @@ from unified_planning.model.metrics import (
 from unified_planning.model.effect import Effect
 from unified_planning.model.parameter import Parameter
 from unified_planning.model.fnode import FNode
-from unified_planning.model.timing import TimeInterval
+from unified_planning.model import timing
 
 
 from ortools.sat.python import cp_model
 
 
-# TODO
+# TODO: complete
 credits = {
     "name": "cpse",
     "author": "",
@@ -192,6 +192,9 @@ class CPSE(
         self.fluent_capacity = {}
         self.fluent_initial_value = {}
 
+        self.bool_var_counter = -1
+        self.int_var_counter = -1
+
     @property
     def name(self) -> str:
         return "CPSE"
@@ -212,9 +215,6 @@ class CPSE(
     @staticmethod
     def supports(problem_kind: up.model.ProblemKind) -> bool:
         return problem_kind <= CPSE.supported_kind()
-
-    bool_var_counter = -1
-    int_var_counter = -1
 
     def new_bool_var(self):
         """Add a new anonymous boolean variable to the model"""
@@ -247,13 +247,32 @@ class CPSE(
     def add_activity(self, activity: Activity):
         """Add an activity to the model. Each activity is modeled using an interval."""
 
-        start_var = self.model.new_int_var(
-            self.lower_bound, self.upper_bound, "start_" + activity.name
+        # assume FixedDuration or ClosedDurationInterval
+        assert (
+            activity.duration.lower.is_int_constant()
+            and activity.duration.upper.is_int_constant()
+            and not activity.duration.is_left_open()
+            and not activity.duration.is_right_open()
         )
-        end_var = self.model.new_int_var(
-            self.lower_bound, self.upper_bound, "end_" + activity.name
-        )
-        duration = activity.duration.upper.constant_value()
+
+        lower = activity.duration.lower.constant_value()
+        upper = activity.duration.upper.constant_value()
+
+        if lower == upper:
+            # FixedDuration
+            start_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "start_" + activity.name
+            )
+            end_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "end_" + activity.name
+            )
+            duration = upper
+        else:
+            # ClosedDurationInterval
+            start_var = lower
+            end_var = upper
+            duration = upper - lower
+
         interval_var = self.model.new_interval_var(
             start_var, duration, end_var, activity.name
         )
@@ -263,9 +282,11 @@ class CPSE(
         self.model_vars[str(activity.start)] = (start_var, activity.start)
         self.model_vars[str(activity.end)] = (end_var, activity.end)
 
-    def add_effect_constraints(
-        self, problem: SchedulingProblem, makespan_var
-    ) -> Dict[str, List]:
+    def add_effect_constraints(self, problem: SchedulingProblem) -> Dict[str, List]:
+        """Add a reservoir constraint for each fluent. The value of the fluent
+        is constrained to remain between [0, C] where C is its maximum capacity"""
+
+        # TODO: model conditions on effects
 
         activities_effects = [
             (timing, eff)
@@ -276,7 +297,9 @@ class CPSE(
 
         effect_timepoints = {}
         for timing, eff in activities_effects + problem.base_effects:
-            assert str(timing) in self.model_vars
+            assert str(timing.timepoint) in self.model_vars
+            assert isinstance(timing.delay, int)
+
             fluent_name = eff.fluent.fluent().name
             value = eff.value.constant_value()
             if eff.is_increase():
@@ -289,7 +312,7 @@ class CPSE(
             if fluent_name not in effect_timepoints:
                 effect_timepoints[fluent_name] = []
             effect_timepoints[fluent_name].append(
-                (self.model_vars[str(timing)][0], value)
+                (self.model_vars[str(timing.timepoint)][0] + timing.delay, value)
             )
 
         # add a reservoir constraint for each fluent: the value of the fluent
@@ -310,15 +333,22 @@ class CPSE(
         return effect_timepoints
 
     def add_constraint_rec(
-        self, fnode: FNode
-    ) -> Union[cp_model.IntVar, bool, int, Any]:
+        self, fnode: FNode, enforce_if=True
+    ) -> Union[cp_model.IntVar, bool, int, None, Any]:
         """Recursively add the constraint (represented by the fnode) to the model"""
 
         if fnode.is_parameter_exp():
             return self.model_vars[fnode.parameter().name][0]
 
         elif fnode.is_timing_exp():
-            return self.model_vars[str(fnode.timing().timepoint)][0]
+            # TODO: test
+            timing = fnode.timing()
+            var = self.model_vars[str(timing.timepoint)][0]
+            # TODO: delay != 0 is possible?
+            if timing.delay != 0:
+                assert isinstance(timing.delay, int)
+                return var + timing.delay
+            return var
 
         elif fnode.is_constant():
             return fnode.constant_value()
@@ -332,18 +362,6 @@ class CPSE(
             op = _OPERATOR_MAP[fnode.node_type]
             args = [self.add_constraint_rec(arg) for arg in fnode.args]
             return op(*args)
-
-        # elif fnode.node_type in [OperatorKind.TIMES, OperatorKind.DIV]:
-        #     # TODO: int_var can be avoided if args are integers
-        #     int_var = self.new_int_var()
-        #     args = [self.add_constraint_rec(arg) for arg in fnode.args]
-        #     if fnode.node_type == OperatorKind.TIMES:
-        #         self.model.add_multiplication_equality(int_var, args)
-        #     else:
-        #         assert len(args) == 2
-        #         # TODO: float division not supported
-        #         self.model.add_division_equality(int_var, args[0], args[1])
-        #     return int_var
 
         elif fnode.node_type == OperatorKind.NOT:
             return self.add_constraint_rec(fnode.args[0]).negated()
@@ -359,29 +377,20 @@ class CPSE(
             for arg in fnode.args:
                 bool_vars.append(self.add_constraint_rec(arg))
 
-            bool_var = self.new_bool_var()
             if fnode.node_type == OperatorKind.AND:
-                self.model.add_bool_and(bool_vars).only_enforce_if(bool_var)
+                constraint = self.model.add_bool_and(bool_vars)
             elif fnode.node_type == OperatorKind.OR:
-                self.model.add_bool_or(bool_vars).only_enforce_if(bool_var)
+                constraint = self.model.add_bool_or(bool_vars)
             elif fnode.node_type == OperatorKind.IMPLIES:
                 assert len(bool_vars) == 2
-                self.model.add_implication(bool_vars[0], bool_vars[1]).only_enforce_if(
-                    bool_var
-                )
+                constraint = self.model.add_implication(bool_vars[0], bool_vars[1])
             elif fnode.node_type == OperatorKind.IFF:
                 assert len(bool_vars) == 2
-                self.model.add_implication(bool_vars[0], bool_vars[1]).only_enforce_if(
-                    bool_var
-                )
-                self.model.add_implication(bool_vars[1], bool_vars[0]).only_enforce_if(
-                    bool_var
-                )
+                # TODO: test
+                constraint = self.model.add(bool_vars[0] == bool_vars[1])
             elif fnode.node_type == OperatorKind.AT_MOST_ONCE:
                 # TODO: test
-                self.model.add_at_most_one(bool_vars).only_enforce_if(bool_var)
-
-            return bool_var
+                constraint = self.model.add_at_most_one(bool_vars)
 
         elif fnode.node_type in [
             OperatorKind.LE,
@@ -390,34 +399,56 @@ class CPSE(
         ]:
             op = _OPERATOR_MAP[fnode.node_type]
             args = [self.add_constraint_rec(arg) for arg in fnode.args]
-            bool_var = self.new_bool_var()
-            self.model.add(op(*args)).only_enforce_if(bool_var)
-            return bool_var
+            constraint = self.model.add(op(*args))
 
         else:
             raise NotImplementedError(f"node type {fnode.node_type} not supported")
+
+        if enforce_if:
+            bool_var = self.new_bool_var()
+            constraint.only_enforce_if(bool_var)
+            return bool_var
 
     def add_constraints(self, problem: SchedulingProblem):
         """Add the problem constraints to the model"""
 
         for fnode in problem.base_constraints:
-            bool_var = self.add_constraint_rec(fnode)
-            # TODO: avoid bool var for the root node
-            self.model.add_bool_and([bool_var])
+            self.add_constraint_rec(fnode, enforce_if=False)
 
-    def add_condition(self, time_interval: TimeInterval, fnode: FNode, name: str):
-        """Add a condition to the model"""
+        for act in problem.activities:
+            for fnode in act.constraints:
+                self.add_constraint_rec(fnode, enforce_if=False)
+
+    def add_condition(
+        self, time_interval: timing.TimeInterval, fnode: FNode, name: str
+    ):
+        """Add a condition to the model. Add a constraint and force it is satisfied
+        in the time interval using the `add_cumulative` method."""
 
         bool_var = self.add_constraint_rec(fnode)
-        # TODO: manage open intervals and fixed time intervals
-        start = self.model_vars[str(time_interval.lower)][0]
-        end = self.model_vars[str(time_interval.upper)][0]
+
+        # TODO: support time expressions
+        start = self.model_vars[str(time_interval.lower.timepoint)][0]
+        if time_interval.lower.delay != 0:
+            assert isinstance(time_interval.lower.delay, int)
+            start += time_interval.lower.delay
+        if time_interval.is_left_open():
+            start += 1
+
+        end = self.model_vars[str(time_interval.upper.timepoint)][0]
+        if time_interval.upper.delay != 0:
+            assert isinstance(time_interval.upper.delay, int)
+            end += time_interval.upper.delay
+        if time_interval.is_right_open():
+            end -= 1
+
         duration = self.model.new_int_var(
             self.lower_bound,
             self.upper_bound,
             f"{name}_duration",
         )
-        self.model.add(duration == (end - start))
+        # self.model.add(duration == (end - start))  # TODO: constraint can be removed ?
+
         # TODO: reuse interval if present
         interval_var = self.model.new_interval_var(start, duration, end, name)
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
@@ -499,7 +530,13 @@ class CPSE(
             makespan_var, [a.end for a in self.activities.values()]
         )
 
-        effect_timepoints = self.add_effect_constraints(problem, makespan_var)
+        # add global start and end to the model variables
+        global_start = timing.GlobalStartTiming(delay=0)
+        global_end = timing.GlobalEndTiming()
+        self.model_vars[str(global_start.timepoint)] = (0, global_start)
+        self.model_vars[str(global_end.timepoint)] = (makespan_var, global_end)
+
+        effect_timepoints = self.add_effect_constraints(problem)
 
         # print("fluent_capacity", self.fluent_capacity)
         # pprint.pprint(effect_timepoints)
@@ -513,20 +550,19 @@ class CPSE(
         solver = cp_model.CpSolver()
         status = solver.solve(self.model)
 
-        # Statistics.
-        print("\nStatistics")
-        print(f"  - conflicts: {solver.num_conflicts}")
-        print(f"  - branches : {solver.num_branches}")
-        print(f"  - wall time: {solver.wall_time}s")
-        print("")
+        # TODO: check metrics
+        metrics = {
+            "engine_internal_time": str(solver.wall_time),
+            "wall_time": str(solver.wall_time),
+            "user_time": str(solver.user_time),
+            "objective_value": str(solver.objective_value),
+            "best_objective_bound": str(solver.best_objective_bound),
+            "branches": str(solver.num_branches),
+            "conflicts": str(solver.num_conflicts),
+            "num_booleans": str(solver.num_booleans),
+        }
 
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-            print(
-                f"{'Optimal' if status == cp_model.OPTIMAL else 'Feasible'} solution found."
-            )
-            print(f"Objective: {solver.objective_value}")
-            print()
-
             # for name in self.model_vars:
             #     print(self.model_vars[name][0], solver.value(self.model_vars[name][0]))
 
@@ -552,14 +588,13 @@ class CPSE(
                 plan,
                 engine_name=self.name,
                 log_messages=None,
-                metrics=None,
+                metrics=metrics,
             )
         else:
-            print("No solution found.")
             return PlanGenerationResult(
                 PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY,
                 plan=None,
                 engine_name=self.name,
                 log_messages=None,
-                metrics=None,
+                metrics=metrics,
             )

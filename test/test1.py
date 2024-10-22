@@ -11,7 +11,7 @@ def main():
     replenish_operators = problem.add_resource("replenish_operators", capacity=2)
     machines = problem.add_resource(f"machines", capacity=3)
     boxes = problem.add_resource(f"boxes", capacity=2)
-    problem.set_initial_value(boxes, 2)
+    problem.set_initial_value(boxes, 1)
 
     bool_var = problem.add_variable(
         "bool_var", get_environment().type_manager.BoolType()
@@ -30,6 +30,8 @@ def main():
     box_construction.add_increase_effect(box_construction.end, boxes, 1)
 
     box_filling = problem.add_activity(f"box_filling", duration=2)
+    box_filling.set_duration_bounds(10, 14)
+
     box_filling.uses(operators, amount=1)
     box_filling.add_increase_effect(box_filling.start, boxes, 1)
     box_filling.add_decrease_effect(box_filling.end, boxes, 1)
@@ -39,7 +41,7 @@ def main():
         #     LE(box_construction.start, box_filling.end),
         # )
         # LE(box_construction.end, box_filling.start)
-        LE(Plus(box_construction.end, +1), box_filling.start),
+        LE(Plus(box_construction.end, 1), box_filling.start),
     )
 
     replenishment = problem.add_activity(
@@ -53,19 +55,53 @@ def main():
     )
     problem.add_decrease_effect(replenishment.start, boxes, 1)
     problem.add_increase_effect(replenishment.end, boxes, 1)
+    problem.add_increase_effect(10, boxes, 1)
 
     problem.add_condition(
         ClosedTimeInterval(Timing(0, box_filling.start), Timing(0, box_filling.end)),
-        LT(1, int_var),
+        LE(1, int_var),
     )
     # TODO: not supported
     # problem.add_condition(
     #     ClosedTimeInterval(box_filling.start, box_filling.end), LT(1, boxes)
     # )
+    # TODO: not supported
+    # problem.add_constraint(LT(1, boxes))
     # box_filling.add_condition(ClosedTimeInterval(box_filling.start, box_filling.end), LT(1, int_var))
     box_filling.add_condition(
         ClosedTimeInterval(Timing(0, box_filling.start), Timing(0, box_filling.end)),
-        LT(1, int_var),
+        LE(1, int_var),
+    )
+    problem.add_condition(
+        TimeInterval(
+            lower=Timing(
+                delay=0, timepoint=Timepoint(TimepointKind.GLOBAL_START, container=None)
+            ),
+            upper=Timing(
+                delay=0, timepoint=Timepoint(TimepointKind.GLOBAL_END, container=None)
+            ),
+            is_left_open=True,
+            is_right_open=True,
+        ),
+        LE(int_var, 1),
+    )
+    problem.add_condition(
+        TimeInterval(
+            lower=Timing(0, box_filling.start),
+            upper=Timing(0, box_filling.end),
+            is_left_open=True,
+            is_right_open=True,
+        ),
+        LE(int_var, 1),
+    )
+    problem.add_condition(
+        TimeInterval(
+            lower=GlobalStartTiming(10),
+            upper=GlobalStartTiming(15),
+            is_left_open=True,
+            is_right_open=True,
+        ),
+        LE(int_var, 1),
     )
 
     problem.add_quality_metric(MinimizeMakespan())
@@ -77,6 +113,17 @@ def main():
         name="cpse", params={"lower_bound": 0, "upper_bound": 100}
     ) as planner:
         res = planner.solve(problem)
+
+        print("\nmetrics:")
+        for m, v in res.metrics.items():
+            print(m, v)
+
+        if res.plan:
+            print("\nassignment:")
+            for var, v in res.plan.assignment.items():
+                print(var, v)
+
+        print()
         print(res)
 
 
