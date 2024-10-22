@@ -10,7 +10,8 @@ def main():
     operators = problem.add_resource("operators", capacity=2)
     replenish_operators = problem.add_resource("replenish_operators", capacity=2)
     machines = problem.add_resource(f"machines", capacity=3)
-    boxes = problem.add_resource(f"boxes", capacity=1)
+    boxes = problem.add_resource(f"boxes", capacity=2)
+    problem.set_initial_value(boxes, 2)
 
     bool_var = problem.add_variable(
         "bool_var", get_environment().type_manager.BoolType()
@@ -73,7 +74,7 @@ def main():
 
     # with OneshotPlanner(problem_kind=problem.kind) as planner:
     with OneshotPlanner(
-        name="cpse", params={"lower_bound": 1, "upper_bound": 100}
+        name="cpse", params={"lower_bound": 0, "upper_bound": 100}
     ) as planner:
         res = planner.solve(problem)
         print(res)
