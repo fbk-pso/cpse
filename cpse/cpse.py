@@ -166,7 +166,7 @@ _OPERATOR_MAP = {
     # OperatorKind.SOMETIME: None,
     # OperatorKind.SOMETIME_BEFORE: None,
     # OperatorKind.SOMETIME_AFTER: None,
-    OperatorKind.AT_MOST_ONCE: None,
+    # OperatorKind.AT_MOST_ONCE: None,
     # OperatorKind.DOT: None,
 }
 
@@ -179,12 +179,12 @@ class CPSE(
     Engine,
     mixins.OneshotPlannerMixin,
 ):
-    def __init__(self, **options):
+    def __init__(self, **kwargs):
         up.engines.Engine.__init__(self)
         up.engines.mixins.OneshotPlannerMixin.__init__(self)
 
-        self.lower_bound = options.get("lower_bound", 0)
-        self.upper_bound = options.get("upper_bound", cp_model.INT32_MAX)
+        self.lower_bound = kwargs.get("lower_bound", 0)
+        self.upper_bound = kwargs.get("upper_bound", cp_model.INT32_MAX)
         self.model = cp_model.CpModel()
 
         self.activities = {}
@@ -322,10 +322,6 @@ class CPSE(
             # initially (at time 0) the fluent is equal to its initial value
             times = [0] + list(times)
             values = [self.fluent_initial_value[fluent_name]] + list(values)
-            # print("################")
-            # print(fluent_name)
-            # print(self.fluent_capacity[fluent_name])
-            # print(times, values)
             self.model.add_reservoir_constraint(
                 times, values, 0, self.fluent_capacity[fluent_name]
             )
@@ -333,9 +329,11 @@ class CPSE(
         return effect_timepoints
 
     def add_constraint_rec(
-        self, fnode: FNode, enforce_if=True
+        self, fnode: FNode
     ) -> Union[cp_model.IntVar, bool, int, None, Any]:
         """Recursively add the constraint (represented by the fnode) to the model"""
+
+        # TODO: reuse bool_var for the same constraint
 
         if fnode.is_parameter_exp():
             return self.model_vars[fnode.parameter().name][0]
@@ -371,53 +369,70 @@ class CPSE(
             OperatorKind.OR,
             OperatorKind.IMPLIES,
             OperatorKind.IFF,
-            OperatorKind.AT_MOST_ONCE,
         ]:
             bool_vars = []
             for arg in fnode.args:
                 bool_vars.append(self.add_constraint_rec(arg))
 
+            bool_var = self.new_bool_var()
             if fnode.node_type == OperatorKind.AND:
-                constraint = self.model.add_bool_and(bool_vars)
+                self.model.add_bool_and(bool_vars).only_enforce_if(bool_var)
+                self.model.add_bool_or(
+                    [b.negated() for b in bool_vars]
+                ).only_enforce_if(bool_var.negated())
             elif fnode.node_type == OperatorKind.OR:
-                constraint = self.model.add_bool_or(bool_vars)
+                self.model.add_bool_or(bool_vars).only_enforce_if(bool_var)
+                self.model.add_bool_and(
+                    [b.negated() for b in bool_vars]
+                ).only_enforce_if(bool_var.negated())
             elif fnode.node_type == OperatorKind.IMPLIES:
                 assert len(bool_vars) == 2
-                constraint = self.model.add_implication(bool_vars[0], bool_vars[1])
+                self.model.add_implication(bool_vars[0], bool_vars[1]).only_enforce_if(
+                    bool_var
+                )
+                self.model.add_bool_and(
+                    bool_vars[0], bool_vars[1].negated()
+                ).only_enforce_if(bool_var.negated())
             elif fnode.node_type == OperatorKind.IFF:
                 assert len(bool_vars) == 2
-                # TODO: test
-                constraint = self.model.add(bool_vars[0] == bool_vars[1])
-            elif fnode.node_type == OperatorKind.AT_MOST_ONCE:
-                # TODO: test
-                constraint = self.model.add_at_most_one(bool_vars)
+                self.model.add(bool_vars[0] == bool_vars[1]).only_enforce_if(bool_var)
+                self.model.add(bool_vars[0] != bool_vars[1]).only_enforce_if(
+                    bool_var.negated()
+                )
 
         elif fnode.node_type in [
             OperatorKind.LE,
             OperatorKind.LT,
             OperatorKind.EQUALS,
         ]:
+            assert len(fnode.args) == 2
             op = _OPERATOR_MAP[fnode.node_type]
             args = [self.add_constraint_rec(arg) for arg in fnode.args]
-            constraint = self.model.add(op(*args))
+            bool_var = self.new_bool_var()
+            self.model.add(op(args[0], args[1])).only_enforce_if(bool_var)
+            if fnode.node_type == OperatorKind.EQUALS:
+                self.model.add(args[0] != args[1]).only_enforce_if(bool_var.negated())
+            else:
+                self.model.add(op(args[1], args[0])).only_enforce_if(bool_var.negated())
 
         else:
             raise NotImplementedError(f"node type {fnode.node_type} not supported")
 
-        if enforce_if:
-            bool_var = self.new_bool_var()
-            constraint.only_enforce_if(bool_var)
-            return bool_var
+        return bool_var
 
     def add_constraints(self, problem: SchedulingProblem):
         """Add the problem constraints to the model"""
 
+        # TODO: avoid bool_var for the root node
+
         for fnode in problem.base_constraints:
-            self.add_constraint_rec(fnode, enforce_if=False)
+            bool_var = self.add_constraint_rec(fnode)
+            self.model.add_bool_and([bool_var])
 
         for act in problem.activities:
             for fnode in act.constraints:
-                self.add_constraint_rec(fnode, enforce_if=False)
+                bool_var = self.add_constraint_rec(fnode)
+                self.model.add_bool_and([bool_var])
 
     def add_condition(
         self, time_interval: timing.TimeInterval, fnode: FNode, name: str
@@ -455,6 +470,8 @@ class CPSE(
 
     def add_conditions(self, problem: SchedulingProblem):
         """Add the conditions defined in the problem and the activities to the model"""
+
+        # TODO: conditions cannot be defined on fluents
 
         for i, (time_interval, fnode) in enumerate(problem.base_conditions):
             name = f"base_condition{i}"
@@ -538,10 +555,6 @@ class CPSE(
 
         effect_timepoints = self.add_effect_constraints(problem)
 
-        # print("fluent_capacity", self.fluent_capacity)
-        # pprint.pprint(effect_timepoints)
-        # print("")
-
         self.add_constraints(problem)
         self.add_conditions(problem)
 
@@ -563,19 +576,13 @@ class CPSE(
         }
 
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-            # for name in self.model_vars:
-            #     print(self.model_vars[name][0], solver.value(self.model_vars[name][0]))
-
-            # print()
-            # for fluent_name in effect_timepoints:
-            #     for timing, value in effect_timepoints[fluent_name]:
-            #         print(fluent_name, timing, value)
-
-            # print()
-
             assignment = {}
             for cp_var, up_var in self.model_vars.values():
+                # TODO: bool vars value should be converted to bool type?
                 assignment[up_var] = solver.value(cp_var)
+                if isinstance(up_var, Parameter) and up_var.type.is_bool_type():
+                    assert solver.value(cp_var) in [0, 1]
+                    assignment[up_var] = solver.value(cp_var) == 1
 
             plan = Schedule(problem.activities, assignment, problem.environment)
 
