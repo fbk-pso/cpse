@@ -25,7 +25,7 @@ jobs:
           git clone https://github.com/aiplan4eu/unified-planning.git
           python3 -m pip install -r unified-planning/requirements.txt
           python3 -m pip install unified-planning/
-          echo -e "[engine cpse]\nmodule_name: cpse\nclass_name: CPSE" > .up.ini
+          echo -e "[engine cpse]\nmodule_name: cpse\nclass_name: CPSE" > ~/.up.ini
           python3 -m pip install pytest pytest-cov
       - name: Run the tests
         run: |
