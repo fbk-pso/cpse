@@ -287,6 +287,7 @@ class CPSE(
         is constrained to remain between [0, C] where C is its maximum capacity"""
 
         # TODO: model conditions on effects
+        # TODO: the reservoir constraint verifies sum(effects) <= C but not each single effect
 
         activities_effects = [
             (timing, eff)
