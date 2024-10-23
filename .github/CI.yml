@@ -1,0 +1,32 @@
+yaml
+
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install unified-planning and cpse
+        run: |
+          python3 -m pip install -r ./requirements.txt
+          python3 -m pip install .
+          git clone https://github.com/aiplan4eu/unified-planning.git
+          python3 -m pip install -r unified-planning/requirements.txt
+          python3 -m pip install unified-planning/
+          echo -e "[engine cpse]\nmodule_name: cpse\nclass_name: CPSE" > .up.ini
+      - name: Run the tests
+        run: |
+          python -m pytest ./tests
