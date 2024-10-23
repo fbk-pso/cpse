@@ -18,7 +18,7 @@ jobs:
           python-version: '3.10'
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Install unified-planning and cpse
+      - name: Install unified-planning, cpse and pytest
         run: |
           python3 -m pip install -r ./requirements.txt
           python3 -m pip install .
@@ -26,6 +26,7 @@ jobs:
           python3 -m pip install -r unified-planning/requirements.txt
           python3 -m pip install unified-planning/
           echo -e "[engine cpse]\nmodule_name: cpse\nclass_name: CPSE" > .up.ini
+          python3 -m pip install pytest pytest-cov
       - name: Run the tests
         run: |
           python -m pytest ./tests
