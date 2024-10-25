@@ -3,7 +3,6 @@
 from typing import IO, Callable, Optional, List, Union, Any, Dict
 import collections
 import operator
-import pprint
 
 import unified_planning as up
 import unified_planning.engines.mixins as mixins
@@ -30,7 +29,6 @@ from unified_planning.model.effect import Effect
 from unified_planning.model.parameter import Parameter
 from unified_planning.model.fnode import FNode
 from unified_planning.model import timing
-
 
 from ortools.sat.python import cp_model
 
@@ -152,7 +150,7 @@ _OPERATOR_MAP = {
     # OperatorKind.VARIABLE_EXP: None,
     # OperatorKind.OBJECT_EXP: None,
     OperatorKind.TIMING_EXP: None,
-    # OperatorKind.BOOL_CONSTANT: None,
+    OperatorKind.BOOL_CONSTANT: None,
     OperatorKind.INT_CONSTANT: None,
     # OperatorKind.REAL_CONSTANT: None,
     OperatorKind.PLUS: operator.add,
@@ -288,6 +286,8 @@ class CPSE(
 
         # TODO: model conditions on effects
         # TODO: the reservoir constraint verifies sum(effects) <= C but not each single effect
+        # TODO: simplify opposite effects at the same timepoint (e.g. increase and
+        # decrease at the same time)
 
         activities_effects = [
             (timing, eff)
@@ -331,10 +331,11 @@ class CPSE(
 
     def add_constraint_rec(
         self, fnode: FNode
-    ) -> Union[cp_model.IntVar, bool, int, None, Any]:
+    ) -> Union[cp_model.IntVar, bool, int, Any]:
         """Recursively add the constraint (represented by the fnode) to the model"""
 
         # TODO: reuse bool_var for the same constraint
+        # TODO: transform to normal form?
 
         if fnode.is_parameter_exp():
             return self.model_vars[fnode.parameter().name][0]
@@ -349,7 +350,7 @@ class CPSE(
                 return var + timing.delay
             return var
 
-        elif fnode.is_constant():
+        elif fnode.node_type in [OperatorKind.BOOL_CONSTANT, OperatorKind.INT_CONSTANT]:
             return fnode.constant_value()
 
         elif fnode.node_type in [
@@ -413,8 +414,10 @@ class CPSE(
             self.model.add(op(args[0], args[1])).only_enforce_if(bool_var)
             if fnode.node_type == OperatorKind.EQUALS:
                 self.model.add(args[0] != args[1]).only_enforce_if(bool_var.negated())
-            else:
-                self.model.add(op(args[1], args[0])).only_enforce_if(bool_var.negated())
+            elif fnode.node_type == OperatorKind.LE:
+                self.model.add(args[0] > args[1]).only_enforce_if(bool_var.negated())
+            elif fnode.node_type == OperatorKind.LT:
+                self.model.add(args[0] >= args[1]).only_enforce_if(bool_var.negated())
 
         else:
             raise NotImplementedError(f"node type {fnode.node_type} not supported")

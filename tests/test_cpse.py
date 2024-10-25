@@ -262,3 +262,59 @@ def test_minimize_makespan(problem: SchedulingProblem):
         assert res.plan.get(activity.end).constant_value() <= (
             num_activities * duration
         )
+
+
+def test_simple_problem(problem: SchedulingProblem):
+    machine = problem.add_resource("machine", capacity=1)
+
+    # Define activities with specific durations
+    activity1 = problem.add_activity("activity1", duration=5)
+    activity2 = problem.add_activity("activity2", duration=10)
+    activity3 = problem.add_activity("activity3", duration=4)
+
+    activity2.set_duration_bounds(5, 15)
+
+    # Each activity requires the machine resource
+    activity2.uses(machine, 1)
+    activity3.uses(machine, 1)
+
+    # activity1.uses(machine, 1)
+    problem.add_decrease_effect(activity1.start, machine, 1)
+    problem.add_increase_effect(activity1.end, machine, 1)
+
+    problem.add_constraint(Equals(activity2.end, activity3.start))
+
+    activity1_before_activity2 = problem.add_variable(
+        "activity1_before_activity2", get_environment().type_manager.BoolType()
+    )
+    activity2_before_activity3 = problem.add_variable(
+        "activity2_before_activity3", get_environment().type_manager.BoolType()
+    )
+    problem.add_constraint(
+        Iff(LE(activity1.end, activity2.start), activity1_before_activity2)
+    )
+    problem.add_constraint(
+        Iff(LE(activity2.end, activity3.start), activity2_before_activity3)
+    )
+
+    # minimizing makespan, activity1 should be the first activity
+    problem.add_quality_metric(MinimizeMakespan())
+
+    with OneshotPlanner(name="cpse") as planner:
+        res = planner.solve(problem)
+        assert res.status in [
+            PlanGenerationResultStatus.SOLVED_SATISFICING,
+            PlanGenerationResultStatus.SOLVED_OPTIMALLY,
+        ]
+        assert res.plan is not None
+        assert isinstance(res.plan, Schedule)
+
+        print(res.plan)
+        print(res.plan.assignment)
+
+        assert res.plan.get(activity1_before_activity2).constant_value()
+        assert res.plan.get(activity2_before_activity3).constant_value()
+        assert res.plan.get(activity3.end).constant_value() == 19
+        assert not are_activities_overlapped(
+            res.plan, [activity1, activity2, activity3]
+        )
