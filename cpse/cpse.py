@@ -5,136 +5,29 @@ import collections
 import operator
 
 import unified_planning as up
-import unified_planning.engines.mixins as mixins
 from unified_planning.engines import (
-    Engine,
     Credits,
     PlanGenerationResult,
     PlanGenerationResultStatus,
 )
+from unified_planning.engines.mixins import OptimalityGuarantee
+from unified_planning.model import OperatorKind, Parameter, FNode, timing, ProblemKind
 from unified_planning.model.scheduling import SchedulingProblem, Activity
-from unified_planning.engines.mixins.oneshot_planner import OptimalityGuarantee
+from unified_planning.model.metrics import MinimizeMakespan
 from unified_planning.plans import Schedule
-from unified_planning.model.operators import OperatorKind
-from unified_planning.model.metrics import (
-    MinimizeActionCosts,
-    MinimizeSequentialPlanLength,
-    MinimizeMakespan,
-    MinimizeExpressionOnFinalState,
-    MaximizeExpressionOnFinalState,
-    Oversubscription,
-    TemporalOversubscription,
-)
-from unified_planning.model.effect import Effect
-from unified_planning.model.parameter import Parameter
-from unified_planning.model.fnode import FNode
-from unified_planning.model import timing
 
 from ortools.sat.python import cp_model
 
 
 # TODO: complete
-credits = {
-    "name": "cpse",
-    "author": "",
-    "contact": "",
-    "website": "",
-    "license": "GPLv3",
-    "short_description": "",
-    "long_description": "",
-}
-
-_SUPPORTED_KIND = up.model.ProblemKind(
-    {
-        # PROBLEM_CLASS
-        "ACTION_BASED",
-        "HIERARCHICAL",
-        "SCHEDULING",
-        # "CONTINGENT", "ACTION_BASED_MULTI_AGENT", "TAMP",
-        # PROBLEM_TYPE
-        "SIMPLE_NUMERIC_PLANNING",
-        # "GENERAL_NUMERIC_PLANNING",
-        # TIME
-        "CONTINUOUS_TIME",
-        "DISCRETE_TIME",
-        "INTERMEDIATE_CONDITIONS_AND_EFFECTS",
-        "EXTERNAL_CONDITIONS_AND_EFFECTS",
-        "TIMED_EFFECTS",
-        "TIMED_GOALS",
-        "DURATION_INEQUALITIES",
-        "SELF_OVERLAPPING",
-        # EXPRESSION_DURATION
-        "STATIC_FLUENTS_IN_DURATIONS",
-        "FLUENTS_IN_DURATIONS",
-        "INT_TYPE_DURATIONS",
-        # "REAL_TYPE_DURATIONS",
-        # NUMBERS
-        # "CONTINUOUS_NUMBERS",
-        "DISCRETE_NUMBERS",
-        "BOUNDED_TYPES",
-        # CONDITIONS_KIND
-        "NEGATIVE_CONDITIONS",
-        "DISJUNCTIVE_CONDITIONS",
-        "EQUALITIES",
-        # "EXISTENTIAL_CONDITIONS",
-        # "UNIVERSAL_CONDITIONS",
-        # EFFECTS_KIND
-        # "CONDITIONAL_EFFECTS",
-        "INCREASE_EFFECTS",
-        "DECREASE_EFFECTS",
-        # "FORALL_EFFECTS",
-        "STATIC_FLUENTS_IN_BOOLEAN_ASSIGNMENTS",
-        "STATIC_FLUENTS_IN_NUMERIC_ASSIGNMENTS",
-        "STATIC_FLUENTS_IN_OBJECT_ASSIGNMENTS",
-        "FLUENTS_IN_BOOLEAN_ASSIGNMENTS",
-        "FLUENTS_IN_NUMERIC_ASSIGNMENTS",
-        "FLUENTS_IN_OBJECT_ASSIGNMENTS",
-        # TYPING
-        "FLAT_TYPING",
-        "HIERARCHICAL_TYPING",
-        # FLUENTS_TYPE
-        "NUMERIC_FLUENTS",
-        "OBJECT_FLUENTS",
-        "INT_FLUENTS",
-        # "REAL_FLUENTS",
-        # PARAMETERS
-        # "BOOL_FLUENT_PARAMETERS",
-        # "BOUNDED_INT_FLUENT_PARAMETERS",
-        "BOOL_ACTION_PARAMETERS",
-        "BOUNDED_INT_ACTION_PARAMETERS",
-        "UNBOUNDED_INT_ACTION_PARAMETERS",
-        # "REAL_ACTION_PARAMETERS",
-        # QUALITY_METRICS
-        "ACTIONS_COST",
-        "FINAL_VALUE",
-        "MAKESPAN",
-        "PLAN_LENGTH",
-        # "OVERSUBSCRIPTION",
-        # "TEMPORAL_OVERSUBSCRIPTION",
-        "INT_NUMBERS_IN_OVERSUBSCRIPTION",
-        # "REAL_NUMBERS_IN_OVERSUBSCRIPTION",
-        # ACTIONS_COST_KIND
-        "STATIC_FLUENTS_IN_ACTIONS_COST",
-        "FLUENTS_IN_ACTIONS_COST",
-        "INT_NUMBERS_IN_ACTIONS_COST",
-        # "REAL_NUMBERS_IN_ACTIONS_COST",
-        # SIMULATED_ENTITIES
-        # "SIMULATED_EFFECTS",
-        # CONSTRAINTS_KIND
-        # "TRAJECTORY_CONSTRAINTS",
-        # "STATE_INVARIANTS"
-        # HIERARCHICAL
-        "METHOD_PRECONDITIONS",
-        "TASK_NETWORK_CONSTRAINTS",
-        "INITIAL_TASK_NETWORK_VARIABLES",
-        "TASK_ORDER_TOTAL",
-        "TASK_ORDER_PARTIAL",
-        # "TASK_ORDER_TEMPORAL",
-        # INITIAL_STATE
-        "UNDEFINED_INITIAL_NUMERIC",
-        "UNDEFINED_INITIAL_SYMBOLIC",
-    },
-    version=2,
+credits = Credits(
+    "CPSE",
+    "FBK PSO Unit",
+    "",
+    "",
+    "GPLv3",
+    "",
+    "",
 )
 
 _OPERATOR_MAP = {
@@ -173,10 +66,9 @@ activity_type = collections.namedtuple(
 )
 
 
-class CPSE(
-    Engine,
-    mixins.OneshotPlannerMixin,
-):
+class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
+    """Implementation of the CPSE Engine."""
+
     def __init__(self, **kwargs):
         up.engines.Engine.__init__(self)
         up.engines.mixins.OneshotPlannerMixin.__init__(self)
@@ -199,19 +91,39 @@ class CPSE(
 
     @staticmethod
     def get_credits(**kwargs) -> Optional["Credits"]:
-        c = Credits(**credits)
-        return c
+        return credits
 
     @staticmethod
     def satisfies(optimality_guarantee: OptimalityGuarantee) -> bool:
         return optimality_guarantee == OptimalityGuarantee.SATISFICING
 
     @staticmethod
-    def supported_kind() -> up.model.ProblemKind:
-        return _SUPPORTED_KIND
+    def supported_kind() -> ProblemKind:
+        supported_kind = ProblemKind()
+        supported_kind.set_problem_class("SCHEDULING")
+        supported_kind.set_problem_type("SIMPLE_NUMERIC_PLANNING")
+        supported_kind.set_time("DISCRETE_TIME")
+        supported_kind.set_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
+        supported_kind.set_time("EXTERNAL_CONDITIONS_AND_EFFECTS")
+        supported_kind.set_time("TIMED_EFFECTS")
+        supported_kind.set_time("TIMED_GOALS")
+        supported_kind.set_time("DURATION_INEQUALITIES")
+        supported_kind.set_expression_duration("INT_TYPE_DURATIONS")
+        supported_kind.set_numbers("BOUNDED_TYPES")
+        supported_kind.set_conditions_kind("NEGATIVE_CONDITIONS")
+        supported_kind.set_conditions_kind("DISJUNCTIVE_CONDITIONS")
+        supported_kind.set_conditions_kind("EQUALITIES")
+        supported_kind.set_effects_kind("INCREASE_EFFECTS")
+        supported_kind.set_effects_kind("DECREASE_EFFECTS")
+        supported_kind.set_typing("FLAT_TYPING")
+        supported_kind.set_parameters("BOOL_ACTION_PARAMETERS")
+        supported_kind.set_parameters("UNBOUNDED_INT_ACTION_PARAMETERS")
+        supported_kind.set_fluents_type("INT_FLUENTS")
+        supported_kind.set_quality_metrics("MAKESPAN")
+        return supported_kind
 
     @staticmethod
-    def supports(problem_kind: up.model.ProblemKind) -> bool:
+    def supports(problem_kind: ProblemKind) -> bool:
         return problem_kind <= CPSE.supported_kind()
 
     def new_bool_var(self):
@@ -237,7 +149,7 @@ class CPSE(
                     self.lower_bound, self.upper_bound, param.name
                 )
             else:
-                raise NotImplementedError
+                raise NotImplementedError(f"Parameter type {param.type} not supported.")
 
             # TODO: check if name duplicated
             self.model_vars[param.name] = (var, param)
@@ -285,7 +197,6 @@ class CPSE(
         is constrained to remain between [0, C] where C is its maximum capacity"""
 
         # TODO: model conditions on effects
-        # TODO: the reservoir constraint verifies sum(effects) <= C but not each single effect
         # TODO: simplify opposite effects at the same timepoint (e.g. increase and
         # decrease at the same time)
 
@@ -296,7 +207,8 @@ class CPSE(
             for eff in effects
         ]
 
-        effect_timepoints = {}
+        # map each fluent to its effects
+        effect_timepoints: Dict[str, List] = {}
         for timing, eff in activities_effects + problem.base_effects:
             assert str(timing.timepoint) in self.model_vars
             assert isinstance(timing.delay, int)
@@ -308,7 +220,7 @@ class CPSE(
             elif eff.is_decrease():
                 value = -value
             else:
-                raise NotImplementedError
+                raise NotImplementedError(f"Effect kind {eff.kind} not supported.")
 
             if fluent_name not in effect_timepoints:
                 effect_timepoints[fluent_name] = []
@@ -336,15 +248,15 @@ class CPSE(
 
         # TODO: reuse bool_var for the same constraint
         # TODO: transform to normal form?
+        # TODO: transform to iterative function
+        # TODO: use cache
 
         if fnode.is_parameter_exp():
             return self.model_vars[fnode.parameter().name][0]
 
         elif fnode.is_timing_exp():
-            # TODO: test
             timing = fnode.timing()
             var = self.model_vars[str(timing.timepoint)][0]
-            # TODO: delay != 0 is possible?
             if timing.delay != 0:
                 assert isinstance(timing.delay, int)
                 return var + timing.delay
@@ -420,7 +332,7 @@ class CPSE(
                 self.model.add(args[0] >= args[1]).only_enforce_if(bool_var.negated())
 
         else:
-            raise NotImplementedError(f"node type {fnode.node_type} not supported")
+            raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
 
         return bool_var
 
@@ -446,7 +358,6 @@ class CPSE(
 
         bool_var = self.add_constraint_rec(fnode)
 
-        # TODO: support time expressions
         start = self.model_vars[str(time_interval.lower.timepoint)][0]
         if time_interval.lower.delay != 0:
             assert isinstance(time_interval.lower.delay, int)
@@ -454,7 +365,9 @@ class CPSE(
         if time_interval.is_left_open():
             start += 1
 
-        end = self.model_vars[str(time_interval.upper.timepoint)][0]
+        # end + 1 because `add_cumulative` enforce the constraint for all t
+        # st. start <= t < end
+        end = self.model_vars[str(time_interval.upper.timepoint)][0] + 1
         if time_interval.upper.delay != 0:
             assert isinstance(time_interval.upper.delay, int)
             end += time_interval.upper.delay
@@ -466,7 +379,6 @@ class CPSE(
             self.upper_bound,
             f"{name}_duration",
         )
-        # self.model.add(duration == (end - start))  # TODO: constraint can be removed ?
 
         # TODO: reuse interval if present
         interval_var = self.model.new_interval_var(start, duration, end, name)
@@ -492,22 +404,11 @@ class CPSE(
     def add_quality_metrics(self, problem: SchedulingProblem, makespan_var):
         """Add the quality metrics to the model"""
 
-        # TODO: add support for all metrics
         for metric in problem.quality_metrics:
-            if isinstance(metric, MinimizeActionCosts):
-                raise NotImplementedError
-            elif isinstance(metric, MinimizeSequentialPlanLength):
-                raise NotImplementedError
-            elif isinstance(metric, MinimizeMakespan):
+            if isinstance(metric, MinimizeMakespan):
                 self.model.minimize(makespan_var)
-            elif isinstance(metric, MinimizeExpressionOnFinalState):
-                raise NotImplementedError
-            elif isinstance(metric, MaximizeExpressionOnFinalState):
-                raise NotImplementedError
-            elif isinstance(metric, Oversubscription):
-                raise NotImplementedError
-            elif isinstance(metric, TemporalOversubscription):
-                raise NotImplementedError
+            else:
+                raise NotImplementedError(f"Quality metric {metric} not supported.")
 
     def _solve(
         self,
@@ -557,19 +458,23 @@ class CPSE(
         self.model_vars[str(global_start.timepoint)] = (0, global_start)
         self.model_vars[str(global_end.timepoint)] = (makespan_var, global_end)
 
-        effect_timepoints = self.add_effect_constraints(problem)
+        # add the effects as constraints in the model
+        self.add_effect_constraints(problem)
 
+        # add problem-specific and activity-related constraints to the model
         self.add_constraints(problem)
+        # add problem-specific and activity-related conditions to the model
         self.add_conditions(problem)
 
+        # add quality metrics to the model
         self.add_quality_metrics(problem, makespan_var)
 
+        # solve the modeled problem
         solver = cp_model.CpSolver()
         status = solver.solve(self.model)
 
-        # TODO: check metrics
+        # define metrics to be returned with the result
         metrics = {
-            "engine_internal_time": str(solver.wall_time),
             "wall_time": str(solver.wall_time),
             "user_time": str(solver.user_time),
             "objective_value": str(solver.objective_value),
@@ -580,10 +485,12 @@ class CPSE(
         }
 
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+            # map a decision variable to its solution value
             assignment = {}
             for cp_var, up_var in self.model_vars.values():
-                # TODO: bool vars value should be converted to bool type?
                 assignment[up_var] = solver.value(cp_var)
+                # map a boolean parameter to its boolean value rather than the
+                # integer value returned by the solver
                 if isinstance(up_var, Parameter) and up_var.type.is_bool_type():
                     assert solver.value(cp_var) in [0, 1]
                     assignment[up_var] = solver.value(cp_var) == 1
