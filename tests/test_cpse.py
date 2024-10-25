@@ -208,6 +208,96 @@ def test_activity_constraints(problem: SchedulingProblem):
     )
 
 
+def test_problem_conditions(problem: SchedulingProblem):
+    activity = problem.add_activity("activity", duration=10)
+    bool_var = problem.add_variable(
+        "bool_var", get_environment().type_manager.BoolType()
+    )
+    int_var = problem.add_variable("int_var", get_environment().type_manager.IntType())
+
+    problem.add_condition(
+        ClosedTimeInterval(Timing(0, activity.start), Timing(0, activity.end)),
+        LE(5, int_var),
+    )
+    problem.add_condition(
+        TimeInterval(
+            lower=Timing(
+                delay=0, timepoint=Timepoint(TimepointKind.GLOBAL_START, container=None)
+            ),
+            upper=Timing(
+                delay=0, timepoint=Timepoint(TimepointKind.GLOBAL_END, container=None)
+            ),
+            is_left_open=True,
+            is_right_open=True,
+        ),
+        LE(int_var, 10),
+    )
+    problem.add_condition(
+        TimeInterval(
+            lower=Timing(1, activity.start),
+            upper=Timing(2, activity.end),
+            is_left_open=True,
+            is_right_open=True,
+        ),
+        Implies(LE(int_var, 15), bool_var),
+    )
+    problem.add_condition(
+        TimeInterval(
+            lower=GlobalStartTiming(10),
+            upper=GlobalStartTiming(15),
+            is_left_open=True,
+            is_right_open=False,
+        ),
+        bool_var,
+    )
+    res = problem_solved_satisficing_or_optimally(problem)
+    assert 5 <= res.plan.get(int_var).constant_value() <= 10
+    assert res.plan.get(bool_var).constant_value()
+
+
+def test_activity_conditions(problem: SchedulingProblem):
+    activity = problem.add_activity("activity", duration=10)
+    bool_var = problem.add_variable(
+        "bool_var", get_environment().type_manager.BoolType()
+    )
+    int_var = problem.add_variable("int_var", get_environment().type_manager.IntType())
+
+    activity.add_condition(
+        TimeInterval(
+            lower=Timing(delay=1, timepoint=activity.start),
+            upper=Timing(delay=0, timepoint=activity.end),
+            is_left_open=True,
+            is_right_open=False,
+        ),
+        LE(int_var, 10),
+    )
+    activity.add_condition(
+        TimePointInterval(Timing(3, activity.start)),
+        LE(5, int_var),
+    )
+    activity.add_condition(
+        OpenTimeInterval(Timing(3, activity.start), Timing(-2, activity.end)),
+        LE(5, int_var),
+    )
+    activity.add_condition(
+        ClosedTimeInterval(Timing(3, activity.start), Timing(-2, activity.end)),
+        LE(5, int_var),
+    )
+    activity.add_condition(
+        LeftOpenTimeInterval(Timing(3, activity.start), Timing(-2, activity.end)),
+        LE(5, int_var),
+    )
+    activity.add_condition(
+        RightOpenTimeInterval(Timing(3, activity.start), Timing(-2, activity.end)),
+        LE(5, int_var),
+    )
+
+    problem.add_constraint(Implies(And(LE(1, int_var), LE(int_var, 20)), bool_var))
+    res = problem_solved_satisficing_or_optimally(problem)
+    assert 5 <= res.plan.get(int_var).constant_value() <= 10
+    assert res.plan.get(bool_var).constant_value()
+
+
 def test_problem_effects(problem: SchedulingProblem):
     resource = problem.add_resource("resource", capacity=1)
     activity = problem.add_activity("activity", duration=20)
@@ -236,13 +326,7 @@ def test_activity_effects(problem: SchedulingProblem):
     problem.add_increase_effect(30, resource, 4)
     activity3.add_decrease_effect(activity3.start, resource, 4)
 
-    # force reservoir constraint bug
-    # problem.add_constraint(Equals(activity1.start, 30))
-
-    res = problem_solved_satisficing_or_optimally(problem)
-    # assert res.plan.get(activity1.start).constant_value() <= 20
-    # assert 20 <= res.plan.get(activity2.start).constant_value() <= 30
-    # assert 30 <= res.plan.get(activity3.start).constant_value()
+    problem_solved_satisficing_or_optimally(problem)
 
 
 def test_minimize_makespan(problem: SchedulingProblem):
@@ -300,21 +384,53 @@ def test_simple_problem(problem: SchedulingProblem):
     # minimizing makespan, activity1 should be the first activity
     problem.add_quality_metric(MinimizeMakespan())
 
-    with OneshotPlanner(name="cpse") as planner:
-        res = planner.solve(problem)
-        assert res.status in [
-            PlanGenerationResultStatus.SOLVED_SATISFICING,
-            PlanGenerationResultStatus.SOLVED_OPTIMALLY,
-        ]
-        assert res.plan is not None
-        assert isinstance(res.plan, Schedule)
+    res = problem_solved_satisficing_or_optimally(problem)
+    assert res.plan.get(activity1_before_activity2).constant_value()
+    assert res.plan.get(activity2_before_activity3).constant_value()
+    assert res.plan.get(activity3.end).constant_value() == 19
+    assert not are_activities_overlapped(res.plan, [activity1, activity2, activity3])
 
-        print(res.plan)
-        print(res.plan.assignment)
 
-        assert res.plan.get(activity1_before_activity2).constant_value()
-        assert res.plan.get(activity2_before_activity3).constant_value()
-        assert res.plan.get(activity3.end).constant_value() == 19
-        assert not are_activities_overlapped(
-            res.plan, [activity1, activity2, activity3]
-        )
+def test_not_supported_parameter_type(problem: SchedulingProblem):
+    activity = problem.add_activity("activity", duration=5)
+    problem.add_variable("param1", get_environment().type_manager.RealType())
+    activity.add_parameter("param2", get_environment().type_manager.RealType())
+    assert not CPSE().supports(problem.kind)
+
+
+def test_not_supported_quality_metrics(problem: SchedulingProblem):
+    problem.add_activity("activity", duration=5)
+    problem.add_quality_metric(MinimizeSequentialPlanLength())
+    assert not CPSE().supports(problem.kind)
+
+
+def test_not_supported_effect_type(problem: SchedulingProblem):
+    activity = problem.add_activity("activity", duration=5)
+    resource = problem.add_resource("resource", 10)
+    problem.add_effect(activity.start, resource, 5)
+
+    with pytest.raises(NotImplementedError):
+        with OneshotPlanner(name="cpse") as planner:
+            planner.solve(problem)
+
+
+def test_not_supported_fluent_exp(problem: SchedulingProblem):
+    resource = problem.add_resource("resource", 10)
+    problem.add_constraint(LT(1, resource))
+
+    with pytest.raises(NotImplementedError):
+        with OneshotPlanner(name="cpse") as planner:
+            planner.solve(problem)
+
+
+def test_not_supported_codition_with_fluent_exp(problem: SchedulingProblem):
+    activity = problem.add_activity("activity", duration=5)
+    resource = problem.add_resource("resource", 10)
+    problem.add_constraint(LT(1, resource))
+    problem.add_condition(
+        ClosedTimeInterval(activity.start, activity.end), LT(1, resource)
+    )
+
+    with pytest.raises(NotImplementedError):
+        with OneshotPlanner(name="cpse") as planner:
+            planner.solve(problem)
