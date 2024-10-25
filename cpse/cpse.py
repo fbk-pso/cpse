@@ -241,100 +241,135 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         return effect_timepoints
 
-    def add_constraint_rec(
-        self, fnode: FNode
-    ) -> Union[cp_model.IntVar, bool, int, Any]:
-        """Recursively add the constraint (represented by the fnode) to the model"""
+    def add_constraint(self, fnode: FNode) -> Union[cp_model.IntVar, bool, int, Any]:
+        """Add the constraint (represented by the fnode) to the model."""
 
         # TODO: reuse bool_var for the same constraint
         # TODO: transform to normal form?
-        # TODO: transform to iterative function
         # TODO: use cache
 
-        if fnode.is_parameter_exp():
-            return self.model_vars[fnode.parameter().name][0]
+        stack = [(fnode, False)]
+        results = []
 
-        elif fnode.is_timing_exp():
-            timing = fnode.timing()
-            var = self.model_vars[str(timing.timepoint)][0]
-            if timing.delay != 0:
-                assert isinstance(timing.delay, int)
-                return var + timing.delay
-            return var
+        while len(stack) > 0:
+            fnode, processed = stack.pop()
 
-        elif fnode.node_type in [OperatorKind.BOOL_CONSTANT, OperatorKind.INT_CONSTANT]:
-            return fnode.constant_value()
+            if fnode.is_parameter_exp():
+                results.append(self.model_vars[fnode.parameter().name][0])
 
-        elif fnode.node_type in [
-            OperatorKind.PLUS,
-            OperatorKind.MINUS,
-            OperatorKind.TIMES,
-            OperatorKind.DIV,
-        ]:
-            op = _OPERATOR_MAP[fnode.node_type]
-            args = [self.add_constraint_rec(arg) for arg in fnode.args]
-            return op(*args)
+            elif fnode.is_timing_exp():
+                timing = fnode.timing()
+                var = self.model_vars[str(timing.timepoint)][0]
+                if timing.delay != 0:
+                    assert isinstance(timing.delay, int)
+                    var += timing.delay
+                results.append(var)
 
-        elif fnode.node_type == OperatorKind.NOT:
-            return self.add_constraint_rec(fnode.args[0]).negated()
+            elif fnode.node_type in [
+                OperatorKind.BOOL_CONSTANT,
+                OperatorKind.INT_CONSTANT,
+            ]:
+                results.append(fnode.constant_value())
 
-        elif fnode.node_type in [
-            OperatorKind.AND,
-            OperatorKind.OR,
-            OperatorKind.IMPLIES,
-            OperatorKind.IFF,
-        ]:
-            bool_vars = []
-            for arg in fnode.args:
-                bool_vars.append(self.add_constraint_rec(arg))
+            elif fnode.node_type in [
+                OperatorKind.PLUS,
+                OperatorKind.MINUS,
+                OperatorKind.TIMES,
+                OperatorKind.DIV,
+            ]:
+                if not processed:
+                    stack.append((fnode, True))
+                    for arg in fnode.args:
+                        stack.append((arg, False))
+                else:
+                    op = _OPERATOR_MAP[fnode.node_type]
+                    args = [results.pop() for arg in fnode.args]
+                    results.append(op(*args))
 
-            bool_var = self.new_bool_var()
-            if fnode.node_type == OperatorKind.AND:
-                self.model.add_bool_and(bool_vars).only_enforce_if(bool_var)
-                self.model.add_bool_or(
-                    [b.negated() for b in bool_vars]
-                ).only_enforce_if(bool_var.negated())
-            elif fnode.node_type == OperatorKind.OR:
-                self.model.add_bool_or(bool_vars).only_enforce_if(bool_var)
-                self.model.add_bool_and(
-                    [b.negated() for b in bool_vars]
-                ).only_enforce_if(bool_var.negated())
-            elif fnode.node_type == OperatorKind.IMPLIES:
-                assert len(bool_vars) == 2
-                self.model.add_implication(bool_vars[0], bool_vars[1]).only_enforce_if(
-                    bool_var
-                )
-                self.model.add_bool_and(
-                    bool_vars[0], bool_vars[1].negated()
-                ).only_enforce_if(bool_var.negated())
-            elif fnode.node_type == OperatorKind.IFF:
-                assert len(bool_vars) == 2
-                self.model.add(bool_vars[0] == bool_vars[1]).only_enforce_if(bool_var)
-                self.model.add(bool_vars[0] != bool_vars[1]).only_enforce_if(
-                    bool_var.negated()
-                )
+            elif fnode.node_type == OperatorKind.NOT:
+                if not processed:
+                    stack.append((fnode, True))
+                    stack.append((fnode.args[0], False))
+                else:
+                    results.append(results.pop().negated())
 
-        elif fnode.node_type in [
-            OperatorKind.LE,
-            OperatorKind.LT,
-            OperatorKind.EQUALS,
-        ]:
-            assert len(fnode.args) == 2
-            op = _OPERATOR_MAP[fnode.node_type]
-            args = [self.add_constraint_rec(arg) for arg in fnode.args]
-            bool_var = self.new_bool_var()
-            self.model.add(op(args[0], args[1])).only_enforce_if(bool_var)
-            if fnode.node_type == OperatorKind.EQUALS:
-                self.model.add(args[0] != args[1]).only_enforce_if(bool_var.negated())
-            elif fnode.node_type == OperatorKind.LE:
-                self.model.add(args[0] > args[1]).only_enforce_if(bool_var.negated())
-            elif fnode.node_type == OperatorKind.LT:
-                self.model.add(args[0] >= args[1]).only_enforce_if(bool_var.negated())
+            elif fnode.node_type in [
+                OperatorKind.AND,
+                OperatorKind.OR,
+                OperatorKind.IMPLIES,
+                OperatorKind.IFF,
+            ]:
+                if not processed:
+                    stack.append((fnode, True))
+                    for arg in fnode.args:
+                        stack.append((arg, False))
+                    continue
 
-        else:
-            raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
+                args = [results.pop() for arg in fnode.args]
+                bool_var = self.new_bool_var()
+                if fnode.node_type == OperatorKind.AND:
+                    self.model.add_bool_and(args).only_enforce_if(bool_var)
+                    self.model.add_bool_or([b.negated() for b in args]).only_enforce_if(
+                        bool_var.negated()
+                    )
+                elif fnode.node_type == OperatorKind.OR:
+                    self.model.add_bool_or(args).only_enforce_if(bool_var)
+                    self.model.add_bool_and(
+                        [b.negated() for b in args]
+                    ).only_enforce_if(bool_var.negated())
+                elif fnode.node_type == OperatorKind.IMPLIES:
+                    assert len(args) == 2
+                    self.model.add_implication(args[0], args[1]).only_enforce_if(
+                        bool_var
+                    )
+                    self.model.add_bool_and(args[0], args[1].negated()).only_enforce_if(
+                        bool_var.negated()
+                    )
+                elif fnode.node_type == OperatorKind.IFF:
+                    assert len(args) == 2
+                    self.model.add(args[0] == args[1]).only_enforce_if(bool_var)
+                    self.model.add(args[0] != args[1]).only_enforce_if(
+                        bool_var.negated()
+                    )
 
-        return bool_var
+                results.append(bool_var)
+
+            elif fnode.node_type in [
+                OperatorKind.LE,
+                OperatorKind.LT,
+                OperatorKind.EQUALS,
+            ]:
+                if not processed:
+                    assert len(fnode.args) == 2
+                    stack.append((fnode, True))
+                    for arg in fnode.args:
+                        stack.append((arg, False))
+                    continue
+
+                args = [results.pop() for arg in fnode.args]
+                op = _OPERATOR_MAP[fnode.node_type]
+                bool_var = self.new_bool_var()
+                self.model.add(op(args[0], args[1])).only_enforce_if(bool_var)
+                if fnode.node_type == OperatorKind.EQUALS:
+                    self.model.add(args[0] != args[1]).only_enforce_if(
+                        bool_var.negated()
+                    )
+                elif fnode.node_type == OperatorKind.LE:
+                    self.model.add(args[0] > args[1]).only_enforce_if(
+                        bool_var.negated()
+                    )
+                elif fnode.node_type == OperatorKind.LT:
+                    self.model.add(args[0] >= args[1]).only_enforce_if(
+                        bool_var.negated()
+                    )
+
+                results.append(bool_var)
+
+            else:
+                raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
+
+        assert len(results) == 1
+        return results[0]
 
     def add_constraints(self, problem: SchedulingProblem):
         """Add the problem constraints to the model"""
@@ -342,12 +377,12 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         # TODO: avoid bool_var for the root node
 
         for fnode in problem.base_constraints:
-            bool_var = self.add_constraint_rec(fnode)
+            bool_var = self.add_constraint(fnode)
             self.model.add_bool_and([bool_var])
 
         for act in problem.activities:
             for fnode in act.constraints:
-                bool_var = self.add_constraint_rec(fnode)
+                bool_var = self.add_constraint(fnode)
                 self.model.add_bool_and([bool_var])
 
     def add_condition(
@@ -356,7 +391,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         """Add a condition to the model. Add a constraint and force it is satisfied
         in the time interval using the `add_cumulative` method."""
 
-        bool_var = self.add_constraint_rec(fnode)
+        bool_var = self.add_constraint(fnode)
 
         start = self.model_vars[str(time_interval.lower.timepoint)][0]
         if time_interval.lower.delay != 0:
