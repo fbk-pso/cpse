@@ -138,6 +138,11 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             self.lower_bound, self.upper_bound, f"int{self.int_var_counter}"
         )
 
+    def _convert_timing_to_linear_expr(self, t: timing.Timing) -> cp_model.LinearExprT:
+        assert str(t.timepoint) in self.model_vars
+        assert isinstance(t.delay, int)
+        return cp_model.LinearExpr.sum([self.model_vars[str(t.timepoint)][0], t.delay])
+
     def add_parameters(self, parameters: List[Parameter]):
         """Add the parameters to the model as boolean or integer variables"""
 
@@ -151,7 +156,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             else:
                 raise NotImplementedError(f"Parameter type {param.type} not supported.")
 
-            # TODO: check if name duplicated
+            assert param.name not in self.model_vars
             self.model_vars[param.name] = (var, param)
 
     def add_activity(self, activity: Activity):
@@ -192,13 +197,11 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self.model_vars[str(activity.start)] = (start_var, activity.start)
         self.model_vars[str(activity.end)] = (end_var, activity.end)
 
-    def add_effect_constraints(self, problem: SchedulingProblem) -> Dict[str, List]:
+    def add_effect_constraints(self, problem: SchedulingProblem):
         """Add a reservoir constraint for each fluent. The value of the fluent
         is constrained to remain between [0, C] where C is its maximum capacity"""
 
         # TODO: model conditions on effects
-        # TODO: simplify opposite effects at the same timepoint (e.g. increase and
-        # decrease at the same time)
 
         activities_effects = [
             (timing, eff)
@@ -208,11 +211,8 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         ]
 
         # map each fluent to its effects
-        effect_timepoints: Dict[str, List] = {}
+        effect_timepoints: Dict[str, Dict["timing.Timing", Dict[str, Any]]] = {}
         for timing, eff in activities_effects + problem.base_effects:
-            assert str(timing.timepoint) in self.model_vars
-            assert isinstance(timing.delay, int)
-
             fluent_name = eff.fluent.fluent().name
             value = eff.value.constant_value()
             if eff.is_increase():
@@ -223,23 +223,28 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 raise NotImplementedError(f"Effect kind {eff.kind} not supported.")
 
             if fluent_name not in effect_timepoints:
-                effect_timepoints[fluent_name] = []
-            effect_timepoints[fluent_name].append(
-                (self.model_vars[str(timing.timepoint)][0] + timing.delay, value)
-            )
+                effect_timepoints[fluent_name] = {}
+
+            if timing not in effect_timepoints[fluent_name]:
+                effect_timepoints[fluent_name][timing] = value
+            else:
+                # sum values of different effects that occur at the same timepoint
+                effect_timepoints[fluent_name][timing] += value
 
         # add a reservoir constraint for each fluent: the value of the fluent
         # should remain between [0, C] where C is its maximum capacity
         for fluent_name in effect_timepoints:
-            times, values = list(zip(*effect_timepoints[fluent_name]))
-            # initially (at time 0) the fluent is equal to its initial value
-            times = [0] + list(times)
-            values = [self.fluent_initial_value[fluent_name]] + list(values)
+            times = [0]
+            values = [self.fluent_initial_value[fluent_name]]
+            for timing in effect_timepoints[fluent_name]:
+                value = effect_timepoints[fluent_name][timing]
+                if value != 0:  # when value is 0, the effect is ignored
+                    times.append(self._convert_timing_to_linear_expr(timing))
+                    values.append(value)
+
             self.model.add_reservoir_constraint(
                 times, values, 0, self.fluent_capacity[fluent_name]
             )
-
-        return effect_timepoints
 
     def add_constraint(self, fnode: FNode) -> Union[cp_model.IntVar, bool, int, Any]:
         """Add the constraint (represented by the fnode) to the model."""
@@ -258,12 +263,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 results.append(self.model_vars[fnode.parameter().name][0])
 
             elif fnode.is_timing_exp():
-                timing = fnode.timing()
-                var = self.model_vars[str(timing.timepoint)][0]
-                if timing.delay != 0:
-                    assert isinstance(timing.delay, int)
-                    var += timing.delay
-                results.append(var)
+                results.append(self._convert_timing_to_linear_expr(fnode.timing()))
 
             elif fnode.node_type in [
                 OperatorKind.BOOL_CONSTANT,
