@@ -73,17 +73,17 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         up.engines.Engine.__init__(self)
         up.engines.mixins.OneshotPlannerMixin.__init__(self)
 
-        self.lower_bound = kwargs.get("lower_bound", 0)
-        self.upper_bound = kwargs.get("upper_bound", cp_model.INT32_MAX)
+        self.lower_bound: int = kwargs.get("lower_bound", 0)
+        self.upper_bound: int = kwargs.get("upper_bound", cp_model.INT32_MAX)
         self.model = cp_model.CpModel()
 
-        self.activities = {}
-        self.model_vars = {}
-        self.fluent_capacity = {}
-        self.fluent_initial_value = {}
+        self.activities: Dict[str, activity_type] = {}
+        self.model_vars: Dict[Union[timing.Timepoint, Parameter], cp_model.IntVar] = {}
+        self.fluent_capacity: Dict[str, int] = {}
+        self.fluent_initial_value: Dict[str, int] = {}
 
-        self.bool_var_counter = -1
-        self.int_var_counter = -1
+        self.bool_var_counter: int = -1
+        self.int_var_counter: int = -1
 
     @property
     def name(self) -> str:
@@ -127,24 +127,25 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         return problem_kind <= CPSE.supported_kind()
 
     def new_bool_var(self):
-        """Add a new anonymous boolean variable to the model"""
+        """Add a new anonymous boolean variable to the model."""
         self.bool_var_counter += 1
         return self.model.new_bool_var(f"bool{self.bool_var_counter}")
 
     def new_int_var(self):
-        """Add a new anonymous integer variable to the model"""
+        """Add a new anonymous integer variable to the model."""
         self.int_var_counter += 1
         return self.model.new_int_var(
             self.lower_bound, self.upper_bound, f"int{self.int_var_counter}"
         )
 
     def _convert_timing_to_linear_expr(self, t: timing.Timing) -> cp_model.LinearExprT:
-        assert str(t.timepoint) in self.model_vars
+        """Convert a `timing.Timing` variable to a `cp_model.LinearExprT`."""
+        assert t.timepoint in self.model_vars
         assert isinstance(t.delay, int)
-        return cp_model.LinearExpr.sum([self.model_vars[str(t.timepoint)][0], t.delay])
+        return cp_model.LinearExpr.sum([self.model_vars[t.timepoint], t.delay])
 
     def add_parameters(self, parameters: List[Parameter]):
-        """Add the parameters to the model as boolean or integer variables"""
+        """Add the parameters to the model as boolean or integer variables."""
 
         for param in parameters:
             if param.type.is_bool_type():
@@ -156,8 +157,8 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             else:
                 raise NotImplementedError(f"Parameter type {param.type} not supported.")
 
-            assert param.name not in self.model_vars
-            self.model_vars[param.name] = (var, param)
+            assert param not in self.model_vars
+            self.model_vars[param] = var
 
     def add_activity(self, activity: Activity):
         """Add an activity to the model. Each activity is modeled using an interval."""
@@ -194,12 +195,12 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self.activities[activity.name] = activity_type(
             start=start_var, end=end_var, interval=interval_var, up_activity=activity
         )
-        self.model_vars[str(activity.start)] = (start_var, activity.start)
-        self.model_vars[str(activity.end)] = (end_var, activity.end)
+        self.model_vars[activity.start] = start_var
+        self.model_vars[activity.end] = end_var
 
     def add_effect_constraints(self, problem: SchedulingProblem):
         """Add a reservoir constraint for each fluent. The value of the fluent
-        is constrained to remain between [0, C] where C is its maximum capacity"""
+        is constrained to remain between [0, C] where C is its maximum capacity."""
 
         # TODO: model conditions on effects
 
@@ -211,7 +212,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         ]
 
         # map each fluent to its effects
-        effect_timepoints: Dict[str, Dict["timing.Timing", Dict[str, Any]]] = {}
+        fluent_effects: Dict[str, Dict["timing.Timing", int]] = {}
         for timing, eff in activities_effects + problem.base_effects:
             fluent_name = eff.fluent.fluent().name
             value = eff.value.constant_value()
@@ -222,22 +223,22 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             else:
                 raise NotImplementedError(f"Effect kind {eff.kind} not supported.")
 
-            if fluent_name not in effect_timepoints:
-                effect_timepoints[fluent_name] = {}
+            if fluent_name not in fluent_effects:
+                fluent_effects[fluent_name] = {}
 
-            if timing not in effect_timepoints[fluent_name]:
-                effect_timepoints[fluent_name][timing] = value
+            if timing not in fluent_effects[fluent_name]:
+                fluent_effects[fluent_name][timing] = value
             else:
                 # sum values of different effects that occur at the same timepoint
-                effect_timepoints[fluent_name][timing] += value
+                fluent_effects[fluent_name][timing] += value
 
         # add a reservoir constraint for each fluent: the value of the fluent
         # should remain between [0, C] where C is its maximum capacity
-        for fluent_name in effect_timepoints:
+        for fluent_name in fluent_effects:
             times = [0]
             values = [self.fluent_initial_value[fluent_name]]
-            for timing in effect_timepoints[fluent_name]:
-                value = effect_timepoints[fluent_name][timing]
+            for timing in fluent_effects[fluent_name]:
+                value = fluent_effects[fluent_name][timing]
                 if value != 0:  # when value is 0, the effect is ignored
                     times.append(self._convert_timing_to_linear_expr(timing))
                     values.append(value)
@@ -246,8 +247,10 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 times, values, 0, self.fluent_capacity[fluent_name]
             )
 
-    def add_constraint(self, fnode: FNode) -> Union[cp_model.IntVar, bool, int, Any]:
-        """Add the constraint (represented by the fnode) to the model."""
+    def add_constraint(
+        self, fnode: FNode
+    ) -> Union[cp_model.IntVar, cp_model.LinearExprT, bool, int, Any]:
+        """Add the constraint represented by the fnode to the model."""
 
         # TODO: reuse bool_var for the same constraint
         # TODO: transform to normal form?
@@ -260,7 +263,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             fnode, processed = stack.pop()
 
             if fnode.is_parameter_exp():
-                results.append(self.model_vars[fnode.parameter().name][0])
+                results.append(self.model_vars[fnode.parameter()])
 
             elif fnode.is_timing_exp():
                 results.append(self._convert_timing_to_linear_expr(fnode.timing()))
@@ -372,7 +375,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         return results[0]
 
     def add_constraints(self, problem: SchedulingProblem):
-        """Add the problem constraints to the model"""
+        """Add the problem constraints to the model."""
 
         # TODO: avoid bool_var for the root node
 
@@ -393,7 +396,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         bool_var = self.add_constraint(fnode)
 
-        start = self.model_vars[str(time_interval.lower.timepoint)][0]
+        start = self.model_vars[time_interval.lower.timepoint]
         if time_interval.lower.delay != 0:
             assert isinstance(time_interval.lower.delay, int)
             start += time_interval.lower.delay
@@ -402,7 +405,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         # end + 1 because `add_cumulative` enforce the constraint for all t
         # st. start <= t < end
-        end = self.model_vars[str(time_interval.upper.timepoint)][0] + 1
+        end = self.model_vars[time_interval.upper.timepoint] + 1
         if time_interval.upper.delay != 0:
             assert isinstance(time_interval.upper.delay, int)
             end += time_interval.upper.delay
@@ -420,7 +423,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
 
     def add_conditions(self, problem: SchedulingProblem):
-        """Add the conditions defined in the problem and the activities to the model"""
+        """Add the conditions defined in the problem and the activities to the model."""
 
         # TODO: conditions cannot be defined on fluents
 
@@ -437,7 +440,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     i += 1
 
     def add_quality_metrics(self, problem: SchedulingProblem, makespan_var):
-        """Add the quality metrics to the model"""
+        """Add the quality metrics to the model."""
 
         for metric in problem.quality_metrics:
             if isinstance(metric, MinimizeMakespan):
@@ -490,8 +493,8 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         # add global start and end to the model variables
         global_start = timing.GlobalStartTiming(delay=0)
         global_end = timing.GlobalEndTiming()
-        self.model_vars[str(global_start.timepoint)] = (0, global_start)
-        self.model_vars[str(global_end.timepoint)] = (makespan_var, global_end)
+        self.model_vars[global_start.timepoint] = 0
+        self.model_vars[global_end.timepoint] = makespan_var
 
         # add the effects as constraints in the model
         self.add_effect_constraints(problem)
@@ -522,7 +525,7 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
             # map a decision variable to its solution value
             assignment = {}
-            for cp_var, up_var in self.model_vars.values():
+            for up_var, cp_var in self.model_vars.items():
                 assignment[up_var] = solver.value(cp_var)
                 # map a boolean parameter to its boolean value rather than the
                 # integer value returned by the solver
