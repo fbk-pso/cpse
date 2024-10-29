@@ -3,6 +3,7 @@
 from typing import IO, Callable, Optional, List, Union, Any, Dict
 import collections
 import operator
+import warnings
 
 import unified_planning as up
 from unified_planning.engines import (
@@ -455,7 +456,11 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         timeout: Optional[float] = None,
         output_stream: Optional[IO[str]] = None,
     ) -> "up.engines.results.PlanGenerationResult":
-        assert isinstance(problem, SchedulingProblem), "problem type not supported"
+        assert isinstance(
+            problem, SchedulingProblem
+        ), f"problem of type {type(problem)} not supported"
+        if heuristic is not None:
+            warnings.warn("CPSE does not support custom heuristics", UserWarning)
 
         self.model.name = problem.name
 
@@ -509,6 +514,13 @@ class CPSE(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         # solve the modeled problem
         solver = cp_model.CpSolver()
+        if timeout is not None:
+            solver.parameters.max_time_in_seconds = timeout
+        if output_stream is not None:
+            solver.parameters.log_search_progress = True
+            solver.log_callback = lambda s: output_stream.write(s + "\n")
+            solver.parameters.log_to_stdout = False
+
         status = solver.solve(self.model)
 
         # define metrics to be returned with the result
