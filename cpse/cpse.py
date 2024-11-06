@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unified Planning Integration for OR-Tools CP-SAT Model"""
-from typing import IO, Callable, Optional, List, Union, Any, Dict
+from typing import IO, Callable, Optional, List, Tuple, Union, Any, Dict
 from abc import abstractmethod
 import collections
 import operator
@@ -13,7 +13,14 @@ from unified_planning.engines import (
     PlanGenerationResultStatus,
 )
 from unified_planning.engines.mixins import OptimalityGuarantee
-from unified_planning.model import OperatorKind, Parameter, FNode, timing, ProblemKind
+from unified_planning.model import (
+    OperatorKind,
+    Parameter,
+    FNode,
+    timing,
+    ProblemKind,
+    Effect,
+)
 from unified_planning.model.scheduling import SchedulingProblem, Activity
 from unified_planning.model.metrics import MinimizeMakespan
 from unified_planning.plans import Schedule
@@ -127,12 +134,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
     def supports(problem_kind: ProblemKind) -> bool:
         return problem_kind <= CPSE.supported_kind()
 
-    def new_bool_var(self):
+    def new_bool_var(self) -> cp_model.IntVar:
         """Add a new anonymous boolean variable to the model."""
         self.bool_var_counter += 1
         return self.model.new_bool_var(f"bool{self.bool_var_counter}")
 
-    def new_int_var(self):
+    def new_int_var(self) -> cp_model.IntVar:
         """Add a new anonymous integer variable to the model."""
         self.int_var_counter += 1
         return self.model.new_int_var(
@@ -342,13 +349,17 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     @abstractmethod
     def add_effects(self, problem: SchedulingProblem):
-        pass
+        """Add the problem effects to the model."""
+        raise NotImplementedError
 
     @abstractmethod
     def add_conditions(self, problem: SchedulingProblem):
-        pass
+        """Add the problem conditions to the model."""
+        raise NotImplementedError
 
-    def add_quality_metrics(self, problem: SchedulingProblem, makespan_var):
+    def add_quality_metrics(
+        self, problem: SchedulingProblem, makespan_var: cp_model.IntVar
+    ):
         """Add the quality metrics to the model."""
 
         for metric in problem.quality_metrics:
@@ -536,7 +547,7 @@ class CPSE(CPSEBaseEngine):
     def add_condition(
         self, time_interval: timing.TimeInterval, fnode: FNode, name: str
     ):
-        """Add a condition to the model. Add a constraint and force it is satisfied
+        """Add a condition to the model. Add a constraint and enforce it is satisfied
         in the time interval using the `add_cumulative` method."""
 
         bool_var = self.add_constraint(fnode)
@@ -586,17 +597,32 @@ class CPSE(CPSEBaseEngine):
 
 
 class CPSETimepoints(CPSEBaseEngine):
+    """Implementation of the CPSE Engine using an ordered list of timepoints."""
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.timepoints = None
-        self.assignment_matrix = None
-        self.resources = None
+
+        self.timepoints: List[cp_model.IntVar] = []
+        self.assignment_matrix: Dict[timing.Timepoint, List[cp_model.IntVar]] = {}
+        self.resources: Dict[str, List[cp_model.IntVar]] = {}
 
     @property
     def name(self) -> str:
         return "CPSETimepoints"
 
     def timepoints_setup(self, problem: SchedulingProblem):
+        """
+        Generates an ordered list of timepoints and associates them with activity
+        timepoints using a boolean assignment matrix. This matrix indicates which
+        timepoints correspond to each activity start/end timepoint.
+
+        For each resource, a list of integer variables is created to hold the values
+        at each timepoint.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem.
+        """
+
         self.timepoints = [
             self.model.new_int_var(self.lower_bound, self.upper_bound, f"timepoint{i}")
             for i in range(len(problem.activities) * 2)
@@ -605,7 +631,7 @@ class CPSETimepoints(CPSEBaseEngine):
             self.model.add(self.timepoints[i] <= self.timepoints[i + 1])
             print(f"{self.timepoints[i]} <= {self.timepoints[i + 1]}")
 
-        activity_timepoints = []
+        activity_timepoints: List[Tuple[timing.Timepoint, cp_model.IntVar]] = []
         for activity_name in sorted(self.activities.keys()):
             activity = self.activities[activity_name]
             activity_timepoints.append((activity.up_activity.start, activity.start))
@@ -680,28 +706,49 @@ class CPSETimepoints(CPSEBaseEngine):
                 )
                 self.resources[fluent.name].append(resource_var)
 
-    def _filter_fluent_effects(self, problem, fluent):
+    def _filter_fluent_effects(
+        self, problem: SchedulingProblem, fluent_name: str
+    ) -> List[Tuple[timing.Timing, Effect]]:
+        """
+        Filters and returns the effects that apply specifically to the given fluent.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem.
+            fluent_name (str): The fluent whose relevant effects are to be identified.
+
+        Returns:
+            List[Tuple[timing.Timing, Effect]]: A list of effects that impact the specified fluent.
+        """
+
         activity_effects = [
             (timing, eff)
             for act in problem.activities
             for timing, effects in act.effects.items()
             for eff in effects
-            if eff.fluent.fluent().name == fluent.name
+            if eff.fluent.fluent().name == fluent_name
         ]
 
         problem_effects = list(
             filter(
-                lambda t_eff: t_eff[1].fluent.fluent().name == fluent.name,
+                lambda t_eff: t_eff[1].fluent.fluent().name == fluent_name,
                 problem.base_effects,
             )
         )
 
         return activity_effects + problem_effects
 
-    def add_assign_effect_constraints(self, problem):
+    def add_assign_effect_constraints(self, problem: SchedulingProblem):
+        """
+        Adds constraints to ensure that assignment effects do not occur simultaneously
+        with any other effect on the same fluent.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem.
+        """
+
         visited_timepoints = set()
         for fluent in problem.fluents:
-            fluent_effects = self._filter_fluent_effects(problem, fluent)
+            fluent_effects = self._filter_fluent_effects(problem, fluent.name)
             assign_effects = list(
                 filter(lambda t_eff: t_eff[1].is_assignment(), fluent_effects)
             )
@@ -745,18 +792,20 @@ class CPSETimepoints(CPSEBaseEngine):
                         self.model_vars[t1.timepoint] != self.model_vars[t2.timepoint]
                     )
 
-    def all_tpi_with_effects_on_fluent(self, tpi, fluent_name, problem):
-        for act in problem.activities:
-            for timing, effects in act.effects.items():
-                for eff in effects:
-                    if eff.fluent.fluent().name == fluent_name:
-                        yield self.assignment_matrix[timing.timepoint][tpi]
+    def add_effect(self, timing: timing.Timing, effect: Effect):
+        """
+        Adds an effect to the model.
 
-        for timing, eff in problem.base_effects:
-            if eff.fluent.fluent().name == fluent_name:
-                yield self.assignment_matrix[timing.timepoint][tpi]
+        For each timepoint, if the effect is applied at that timepoint, the fluent value
+        is updated to be equal to its value at the previous timepoint plus the effect.
+        If the effect is an assignment, the fluent value at that timepoint is set directly
+        to the effect value.
 
-    def add_effect(self, timing, effect):
+        Args:
+            timing (timing.Timing): The specific timing at which the effect is applied.
+            effect (Effect): The effect to apply.
+        """
+
         fluent_name = effect.fluent.fluent().name
         value = effect.value.constant_value()
         assert value >= 0
@@ -786,13 +835,18 @@ class CPSETimepoints(CPSEBaseEngine):
                 )
 
     def add_effects(self, problem: SchedulingProblem):
+        """
+        Adds the problem effects to the model. For each fluent, if an effect is not applied
+        at a specific timepoint, the fluent retains its value from the previous timepoint.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem
+        """
+
         self.timepoints_setup(problem)
 
         for act in problem.activities:
             for timing, effects in act.effects.items():
-                from unified_planning.model.timing import Timepoint
-
-                assert isinstance(timing.timepoint, Timepoint)
                 for eff in effects:
                     self.add_effect(timing, eff)
 
@@ -804,17 +858,21 @@ class CPSETimepoints(CPSEBaseEngine):
         #       if no activities have effects on that resource at that timepoint
         #           resource@tp(i) == resource@tp(i-1)
         for fluent_name in self.resources:
+            fluent_effects = self._filter_fluent_effects(problem, fluent_name)
             for i, tp in enumerate(self.timepoints):
-                activity_tps = list(
-                    self.all_tpi_with_effects_on_fluent(i, fluent_name, problem)
+                assignment_vars = list(
+                    map(
+                        lambda t_eff: self.assignment_matrix[t_eff[0].timepoint][i],
+                        fluent_effects,
+                    )
                 )
                 bool_var = self.new_bool_var()
                 self.model.add(
                     self.resources[fluent_name][i + 1] == self.resources[fluent_name][i]
                 ).only_enforce_if(bool_var)
-                self.model.add_bool_or(activity_tps + [bool_var])
+                self.model.add_bool_or(assignment_vars + [bool_var])
                 print(
-                    f"or({activity_tps}) or ({self.resources[fluent_name][i + 1]} == {self.resources[fluent_name][i]})"
+                    f"or({assignment_vars}) or ({self.resources[fluent_name][i + 1]} == {self.resources[fluent_name][i]})"
                 )
 
         self.add_assign_effect_constraints(problem)
@@ -822,7 +880,7 @@ class CPSETimepoints(CPSEBaseEngine):
     def add_condition(
         self, time_interval: timing.TimeInterval, fnode: FNode, name: str
     ):
-        """Add a condition to the model. Add a constraint and force it is satisfied
+        """Adds a condition to the model: adds a constraint and enforces it is satisfied
         in the time interval using the `add_cumulative` method."""
 
         # TODO: enforce condition using timepoints
@@ -856,7 +914,7 @@ class CPSETimepoints(CPSEBaseEngine):
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
 
     def add_conditions(self, problem: SchedulingProblem):
-        """Add the conditions defined in the problem and the activities to the model."""
+        """Adds the conditions defined in the problem and the activities to the model."""
 
         # TODO: conditions cannot be defined on fluents
 
