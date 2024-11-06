@@ -29,7 +29,7 @@ from unified_planning.model.metrics import (
 from unified_planning.model.effect import Effect
 from unified_planning.model.parameter import Parameter
 from unified_planning.model.fnode import FNode
-from unified_planning.model.timing import TimeInterval
+from unified_planning.model.timing import TimeInterval, Timing
 
 
 from ortools.sat.python import cp_model
@@ -152,7 +152,7 @@ _OPERATOR_MAP = {
     # OperatorKind.VARIABLE_EXP: None,
     # OperatorKind.OBJECT_EXP: None,
     OperatorKind.TIMING_EXP: None,
-    # OperatorKind.BOOL_CONSTANT: None,
+    OperatorKind.BOOL_CONSTANT: None,
     OperatorKind.INT_CONSTANT: None,
     # OperatorKind.REAL_CONSTANT: None,
     OperatorKind.PLUS: operator.add,
@@ -166,7 +166,7 @@ _OPERATOR_MAP = {
     # OperatorKind.SOMETIME: None,
     # OperatorKind.SOMETIME_BEFORE: None,
     # OperatorKind.SOMETIME_AFTER: None,
-    OperatorKind.AT_MOST_ONCE: None,
+    # OperatorKind.AT_MOST_ONCE: None,
     # OperatorKind.DOT: None,
 }
 
@@ -236,105 +236,143 @@ class CPSE(
             # TODO: check if name duplicated
             self.model_vars[param.name] = (var, param)
 
-    def add_constraint_rec(
+    def _convert_timing_to_linear_expr(self, t: Timing) -> cp_model.LinearExprT:
+        """Convert a `Timing` variable to a `cp_model.LinearExprT`."""
+        assert str(t.timepoint) in self.model_vars
+        assert isinstance(t.delay, int)
+        return cp_model.LinearExpr.sum([self.model_vars[str(t.timepoint)][0], t.delay])
+
+    def add_constraint(
         self, fnode: FNode
-    ) -> Union[cp_model.IntVar, bool, int, Any]:
-        if fnode.is_parameter_exp():
-            return self.model_vars[fnode.parameter().name][0]
+    ) -> Union[cp_model.IntVar, cp_model.LinearExprT, bool, int, Any]:
+        """Add the constraint represented by the fnode to the model."""
 
-        elif fnode.is_timing_exp():
-            # print(fnode.timing().timepoint)
-            return self.model_vars[str(fnode.timing().timepoint)][0]
+        # TODO: reuse bool_var for the same constraint
+        # TODO: transform to normal form?
+        # TODO: use cache
 
-        elif fnode.is_constant():
-            # print(fnode.constant_value())
-            return fnode.constant_value()
+        stack = [(fnode, False)]
+        results = []
 
-        elif fnode.node_type in [
-            OperatorKind.PLUS,
-            OperatorKind.MINUS,
-            OperatorKind.TIMES,
-            OperatorKind.DIV,
-        ]:
-            op = _OPERATOR_MAP[fnode.node_type]
-            # print(op)
-            args = [self.add_constraint_rec(arg) for arg in fnode.args]
-            return op(*args)
+        while len(stack) > 0:
+            fnode, processed = stack.pop()
 
-        # elif fnode.node_type in [OperatorKind.TIMES, OperatorKind.DIV]:
-        #     # TODO: int_var can be avoided if args are integers
-        #     int_var = self.new_int_var()
-        #     args = [self.add_constraint_rec(arg) for arg in fnode.args]
-        #     if fnode.node_type == OperatorKind.TIMES:
-        #         self.model.add_multiplication_equality(int_var, args)
-        #     else:
-        #         assert len(args) == 2
-        #         # TODO: float division not supported
-        #         self.model.add_division_equality(int_var, args[0], args[1])
-        #     return int_var
+            if fnode.is_parameter_exp():
+                results.append(self.model_vars[fnode.parameter().name][0])
 
-        elif fnode.node_type == OperatorKind.NOT:
-            # print("not")
-            # print(fnode.args)
-            return self.add_constraint_rec(fnode.args[0]).negated()
+            elif fnode.is_timing_exp():
+                results.append(self._convert_timing_to_linear_expr(fnode.timing()))
 
-        elif fnode.node_type in [
-            OperatorKind.AND,
-            OperatorKind.OR,
-            OperatorKind.IMPLIES,
-            OperatorKind.IFF,
-            OperatorKind.AT_MOST_ONCE,
-        ]:
-            # print(fnode.node_type)
-            # print(fnode.args)
-            bool_vars = []
-            for arg in fnode.args:
-                bool_vars.append(self.add_constraint_rec(arg))
+            elif fnode.node_type in [
+                OperatorKind.BOOL_CONSTANT,
+                OperatorKind.INT_CONSTANT,
+            ]:
+                results.append(fnode.constant_value())
 
-            bool_var = self.new_bool_var()
-            if fnode.node_type == OperatorKind.AND:
-                self.model.add_bool_and(bool_vars).only_enforce_if(bool_var)
-            elif fnode.node_type == OperatorKind.OR:
-                self.model.add_bool_or(bool_vars).only_enforce_if(bool_var)
-            elif fnode.node_type == OperatorKind.IMPLIES:
-                assert len(bool_vars) == 2
-                self.model.add_implication(bool_vars[0], bool_vars[1]).only_enforce_if(
-                    bool_var
-                )
-            elif fnode.node_type == OperatorKind.IFF:
-                assert len(bool_vars) == 2
-                self.model.add_implication(bool_vars[0], bool_vars[1]).only_enforce_if(
-                    bool_var
-                )
-                self.model.add_implication(bool_vars[1], bool_vars[0]).only_enforce_if(
-                    bool_var
-                )
-            elif fnode.node_type == OperatorKind.AT_MOST_ONCE:
-                # TODO: test
-                self.model.add_at_most_one(bool_vars).only_enforce_if(bool_var)
+            elif fnode.node_type in [
+                OperatorKind.PLUS,
+                OperatorKind.MINUS,
+                OperatorKind.TIMES,
+                OperatorKind.DIV,
+            ]:
+                if not processed:
+                    stack.append((fnode, True))
+                    for arg in fnode.args:
+                        stack.append((arg, False))
+                else:
+                    op = _OPERATOR_MAP[fnode.node_type]
+                    args = [results.pop() for arg in fnode.args]
+                    results.append(op(*args))
 
-            return bool_var
+            elif fnode.node_type == OperatorKind.NOT:
+                if not processed:
+                    stack.append((fnode, True))
+                    stack.append((fnode.args[0], False))
+                else:
+                    results.append(results.pop().negated())
 
-        elif fnode.node_type in [
-            OperatorKind.LE,
-            OperatorKind.LT,
-            OperatorKind.EQUALS,
-        ]:
-            op = _OPERATOR_MAP[fnode.node_type]
-            # print(op)
-            args = [self.add_constraint_rec(arg) for arg in fnode.args]
-            bool_var = self.new_bool_var()
-            self.model.add(op(*args)).only_enforce_if(bool_var)
-            # print(op(*args))
-            return bool_var
+            elif fnode.node_type in [
+                OperatorKind.AND,
+                OperatorKind.OR,
+                OperatorKind.IMPLIES,
+                OperatorKind.IFF,
+            ]:
+                if not processed:
+                    stack.append((fnode, True))
+                    for arg in fnode.args:
+                        stack.append((arg, False))
+                    continue
 
-        else:
-            raise NotImplementedError(f"node type {fnode.node_type} not supported")
+                args = [results.pop() for arg in fnode.args]
+                bool_var = self.new_bool_var()
+                if fnode.node_type == OperatorKind.AND:
+                    self.model.add_bool_and(args).only_enforce_if(bool_var)
+                    self.model.add_bool_or([b.negated() for b in args]).only_enforce_if(
+                        bool_var.negated()
+                    )
+                elif fnode.node_type == OperatorKind.OR:
+                    self.model.add_bool_or(args).only_enforce_if(bool_var)
+                    self.model.add_bool_and(
+                        [b.negated() for b in args]
+                    ).only_enforce_if(bool_var.negated())
+                elif fnode.node_type == OperatorKind.IMPLIES:
+                    assert len(args) == 2
+                    self.model.add_implication(args[0], args[1]).only_enforce_if(
+                        bool_var
+                    )
+                    self.model.add_bool_and(args[0], args[1].negated()).only_enforce_if(
+                        bool_var.negated()
+                    )
+                elif fnode.node_type == OperatorKind.IFF:
+                    assert len(args) == 2
+                    self.model.add(args[0] == args[1]).only_enforce_if(bool_var)
+                    self.model.add(args[0] != args[1]).only_enforce_if(
+                        bool_var.negated()
+                    )
+
+                results.append(bool_var)
+
+            elif fnode.node_type in [
+                OperatorKind.LE,
+                OperatorKind.LT,
+                OperatorKind.EQUALS,
+            ]:
+                if not processed:
+                    assert len(fnode.args) == 2
+                    stack.append((fnode, True))
+                    for arg in fnode.args:
+                        stack.append((arg, False))
+                    continue
+
+                args = [results.pop() for arg in fnode.args]
+                op = _OPERATOR_MAP[fnode.node_type]
+                bool_var = self.new_bool_var()
+                self.model.add(op(args[0], args[1])).only_enforce_if(bool_var)
+                if fnode.node_type == OperatorKind.EQUALS:
+                    self.model.add(args[0] != args[1]).only_enforce_if(
+                        bool_var.negated()
+                    )
+                elif fnode.node_type == OperatorKind.LE:
+                    self.model.add(args[0] > args[1]).only_enforce_if(
+                        bool_var.negated()
+                    )
+                elif fnode.node_type == OperatorKind.LT:
+                    self.model.add(args[0] >= args[1]).only_enforce_if(
+                        bool_var.negated()
+                    )
+
+                results.append(bool_var)
+
+            else:
+                raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
+
+        assert len(results) == 1
+        return results[0]
 
     def add_effect(self, effect, resources, activity_timepoints_assignment):
         fluent_name = effect.fluent.fluent().name
         value = effect.value.constant_value()
-        assert value > 0
+        assert value >= 0
 
         if effect.is_decrease():
             value = -value
@@ -354,6 +392,70 @@ class CPSE(
                     f"{bool_var} => ({resources[fluent_name][i + 1]} == {(resources[fluent_name][i] + value)})"
                 )
 
+    def _filter_fluent_effects(self, problem, fluent):
+        activity_effects = [
+            (timing, eff)
+            for act in problem.activities
+            for timing, effects in act.effects.items()
+            for eff in effects
+            if eff.fluent.fluent().name == fluent.name
+        ]
+
+        problem_effects = list(
+            filter(
+                lambda t_eff: t_eff[1].fluent.fluent().name == fluent.name,
+                problem.base_effects,
+            )
+        )
+
+        return activity_effects + problem_effects
+
+    def add_assign_effect_constraints(self, problem):
+        visited_timepoints = set()
+        for fluent in problem.fluents:
+            fluent_effects = self._filter_fluent_effects(problem, fluent)
+            assign_effects = list(
+                filter(lambda t_eff: t_eff[1].is_assignment(), fluent_effects)
+            )
+            increase_decrease_effects = list(
+                filter(lambda t_eff: not t_eff[1].is_assignment(), fluent_effects)
+            )
+            # print(assign_effects)
+            # print(increase_decrease_effects)
+
+            activity_timepoints = list(
+                set(  # remove duplicates
+                    map(lambda t_eff: self.model_vars[str(t_eff[0])][0], assign_effects)
+                )
+            )
+
+            # TODO: use pairwise inequalities ?
+            self.model.add_all_different(activity_timepoints)
+            print(f"all_different{activity_timepoints}")
+
+            # add timepoints to visited_timepoints
+            for i in range(len(activity_timepoints)):
+                for j in range(i + 1, len(activity_timepoints)):
+                    t1 = activity_timepoints[i]
+                    t2 = activity_timepoints[j]
+                    visited_timepoints.add((str(t1), str(t2)))
+                    visited_timepoints.add((str(t2), str(t1)))
+
+            for t1, e1 in assign_effects:
+                for t2, e2 in increase_decrease_effects:
+                    if t1 == t2 or (str(t1), str(t2)) in visited_timepoints:
+                        continue
+
+                    visited_timepoints.add((str(t1), str(t2)))
+                    visited_timepoints.add((str(t2), str(t1)))
+
+                    print(
+                        f"{self.model_vars[str(t1)][0]} != {self.model_vars[str(t2)][0]}"
+                    )
+                    self.model.add(
+                        self.model_vars[str(t1)][0] != self.model_vars[str(t2)][0]
+                    )
+
     def all_tpi_with_effects_on_fluent(
         self, tpi, fluent_name, problem, activity_timepoints_assignment
     ):
@@ -368,7 +470,7 @@ class CPSE(
                 yield activity_timepoints_assignment[str(timing)][tpi]
 
     def add_condition(self, time_interval: TimeInterval, fnode: FNode, name: str):
-        bool_var = self.add_constraint_rec(fnode)
+        bool_var = self.add_constraint(fnode)
         # TODO: manage open intervals and fixed time intervals
         start = self.model_vars[str(time_interval.lower)][0]
         end = self.model_vars[str(time_interval.upper)][0]
@@ -431,50 +533,57 @@ class CPSE(
             self.model.new_int_var(self.lower_bound, self.upper_bound, f"timepoint{i}")
             for i in range(len(problem.activities) * 2)
         ]
-        # TODO: we assume timepoints are all different
         for i in range(len(timepoints) - 1):
-            self.model.add(timepoints[i] < timepoints[i + 1])
-            print(f"{timepoints[i]} < {timepoints[i + 1]}")
+            self.model.add(timepoints[i] <= timepoints[i + 1])
+            print(f"{timepoints[i]} <= {timepoints[i + 1]}")
 
         activity_timepoints = []
-        for activity in activities.values():
+        for activity_name in sorted(activities.keys()):
+            activity = activities[activity_name]
             activity_timepoints.append((activity.up_activity.start, activity.start))
             activity_timepoints.append((activity.up_activity.end, activity.end))
         activity_timepoints_assignment = {}
-        all_condition_vars = []  # TODO: remove
+        # position_vars = []
+        # all_comparison_vars = []  # TODO: remove
         for i in range(len(activity_timepoints)):
             up_tp_i, activity_timepoint_i = activity_timepoints[i]
-            condition_vars = []
-            for j in range(len(activity_timepoints)):
-                if i == j:
-                    continue
+            # comparison_vars = []
+            # for j in range(len(activity_timepoints)):
+            #     if i == j:
+            #         continue
 
-                up_tp_j, activity_timepoint_j = activity_timepoints[j]
-                condition_bool_var = self.new_bool_var()
-                condition_vars.append(condition_bool_var)
-                all_condition_vars.append(condition_bool_var)
-                # self.model.add(
-                #     (activity_timepoint_i > activity_timepoint_j) == condition_bool_var
-                # )
-                self.model.add(
-                    activity_timepoint_i > activity_timepoint_j
-                ).only_enforce_if(condition_bool_var)
-                print(
-                    f"{condition_bool_var} => ({activity_timepoint_i} > {activity_timepoint_j})"
-                )
+            #     up_tp_j, activity_timepoint_j = activity_timepoints[j]
+            #     comparison_var = self.new_bool_var()
+            #     comparison_vars.append(comparison_var)
+            #     all_comparison_vars.append(comparison_var)
+            #     # self.model.add(
+            #     #     (activity_timepoint_i > activity_timepoint_j) == comparison_var
+            #     # )
+            #     self.model.add(
+            #         activity_timepoint_i > activity_timepoint_j
+            #     ).only_enforce_if(comparison_var)
+            #     print(
+            #         f"{comparison_var} => ({activity_timepoint_i} > {activity_timepoint_j})"
+            #     )
+
+            # position_var = self.model.new_int_var(0, len(activity_timepoints)-1, f"activity_tp{i}_position")
+            # position_vars.append(position_var)
+            # self.model.add(position_var == cp_model.LinearExpr.sum(comparison_vars))
 
             activity_timepoints_assignment[str(up_tp_i)] = []
             for idx, tp in enumerate(timepoints):
                 # if tp is idx-th <=> (tp_i == activity_timepoint_i)
-                # self.model.add((sum(condition_vars) == idx) == (tp == activity_timepoint_i))
-                # self.model.add((sum(condition_vars) == idx) == bool_var)
+                # self.model.add((sum(comparison_vars) == idx) == (tp == activity_timepoint_i))
+                # self.model.add((sum(comparison_vars) == idx) == bool_var)
                 # self.model.add((tp == activity_timepoint_i) == bool_var)
 
                 bool_var = self.model.new_bool_var(f"{activity_timepoint_i}@{tp}")
                 activity_timepoints_assignment[str(up_tp_i)].append(bool_var)
-                self.model.add(sum(condition_vars) == idx).only_enforce_if(bool_var)
+                # self.model.add(
+                #     cp_model.LinearExpr.sum(comparison_vars) == idx
+                # ).only_enforce_if(bool_var)
                 self.model.add(tp == activity_timepoint_i).only_enforce_if(bool_var)
-                print(f"{bool_var} => ({sum(condition_vars)} == {idx})")
+                # print(f"{bool_var} => ({sum(comparison_vars)} == {idx})")
                 print(f"{bool_var} => ({tp} == {activity_timepoint_i})")
 
             # each activity timepoint is assigned to exactly one timepoint
@@ -486,6 +595,12 @@ class CPSE(
             self.model.add_exactly_one(
                 bool_vars[i] for bool_vars in activity_timepoints_assignment.values()
             )
+            print(
+                f"exactly_one({[bool_vars[i] for bool_vars in activity_timepoints_assignment.values()]})"
+            )
+
+        # print(position_vars)
+        # self.model.add_all_different(position_vars)
 
         # (num resources) x (num timepoints + 1)
         resources = {}
@@ -505,7 +620,6 @@ class CPSE(
         # TODO: we assume maximum one effect (increase or decrease) at start and/or
         # end of each activity
         for act in problem.activities:
-            activity = activities[act.name]
             for timing, effects in act.effects.items():
                 for eff in effects:
                     self.add_effect(
@@ -515,7 +629,6 @@ class CPSE(
                     )
 
         for i, (timing, eff) in enumerate(problem.base_effects):
-            assert str(timing) in self.model_vars
             self.add_effect(
                 eff,
                 resources,
@@ -542,10 +655,17 @@ class CPSE(
                     f"or({activity_tps}) or ({resources[fluent_name][i + 1]} == {resources[fluent_name][i]})"
                 )
 
+        self.add_assign_effect_constraints(problem)
+
         for fnode in problem.base_constraints:
-            bool_var = self.add_constraint_rec(fnode)
+            bool_var = self.add_constraint(fnode)
             # TODO: avoid bool var for the root node
             self.model.add_bool_and([bool_var])
+
+        for act in problem.activities:
+            for fnode in act.constraints:
+                bool_var = self.add_constraint(fnode)
+                self.model.add_bool_and([bool_var])
 
         for i, (time_interval, fnode) in enumerate(problem.base_conditions):
             name = f"base_condition{i}"
@@ -577,6 +697,7 @@ class CPSE(
                 raise NotImplementedError
 
         solver = cp_model.CpSolver()
+        # solver.parameters.max_time_in_seconds = 30
         status = solver.solve(self.model)
 
         # Statistics.
@@ -584,6 +705,7 @@ class CPSE(
         print(f"  - conflicts: {solver.num_conflicts}")
         print(f"  - branches : {solver.num_branches}")
         print(f"  - wall time: {solver.wall_time}s")
+        print(f"  - num_booleans: {solver.num_booleans}")
         print("")
 
         if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
@@ -595,13 +717,14 @@ class CPSE(
 
             for vv in activity_timepoints_assignment.values():
                 for var in vv:
-                    print(var, solver.value(var))
-            for var in all_condition_vars:
-                print(var, solver.value(var))
+                    if solver.value(var):
+                        print(var)
+            # for var in all_comparison_vars:
+            #     print(var, solver.value(var))
             for var in timepoints:
                 print(var, solver.value(var))
-            for _, var in activity_timepoints:
-                print(var, solver.value(var))
+            # for _, var in activity_timepoints:
+            #     print(var, solver.value(var))
             for name, rr in resources.items():
                 print(name)
                 for var in rr:
