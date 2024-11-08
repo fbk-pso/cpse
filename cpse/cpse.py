@@ -91,9 +91,6 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self.fluent_capacity: Dict[str, int] = {}
         self.fluent_initial_value: Dict[str, int] = {}
 
-        self.global_start = timing.GlobalStartTiming(delay=0)
-        self.global_end = timing.GlobalEndTiming()
-
         self.bool_var_counter: int = -1
         self.int_var_counter: int = -1
 
@@ -226,6 +223,13 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             elif fnode.is_timing_exp():
                 results.append(self._convert_timing_to_linear_expr(fnode.timing()))
+
+            elif fnode.is_fluent_exp():
+                if fnode.fluent() not in self.model_vars:
+                    raise NotImplementedError(
+                        f"Node type {fnode.node_type} not supported."
+                    )
+                results.append(self.model_vars[fnode.fluent()])
 
             elif fnode.node_type in [
                 OperatorKind.BOOL_CONSTANT,
@@ -415,8 +419,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         )
 
         # add global start and end to the model variables
-        self.model_vars[self.global_start.timepoint] = 0
-        self.model_vars[self.global_end.timepoint] = makespan_var
+        self.model_vars[timing.GlobalStartTiming(delay=0).timepoint] = 0
+        self.model_vars[timing.GlobalEndTiming().timepoint] = makespan_var
 
         # add the effects to the model
         self.add_effects(problem)
@@ -552,21 +556,23 @@ class CPSE(CPSEBaseEngine):
 
         bool_var = self.add_constraint(fnode)
 
-        start = self.model_vars[time_interval.lower.timepoint]
+        c = 0
         if time_interval.lower.delay != 0:
             assert isinstance(time_interval.lower.delay, int)
-            start += time_interval.lower.delay
+            c += time_interval.lower.delay
         if time_interval.is_left_open():
-            start += 1
+            c += 1
+        start = self.model_vars[time_interval.lower.timepoint] + c
 
         # end + 1 because `add_cumulative` enforce the constraint for all t
         # st. start <= t < end
-        end = self.model_vars[time_interval.upper.timepoint] + 1
+        c = 1
         if time_interval.upper.delay != 0:
             assert isinstance(time_interval.upper.delay, int)
-            end += time_interval.upper.delay
+            c += time_interval.upper.delay
         if time_interval.is_right_open():
-            end -= 1
+            c -= 1
+        end = self.model_vars[time_interval.upper.timepoint] + c
 
         duration = self.model.new_int_var(
             self.lower_bound,
@@ -629,7 +635,6 @@ class CPSETimepoints(CPSEBaseEngine):
         ]
         for i in range(len(self.timepoints) - 1):
             self.model.add(self.timepoints[i] <= self.timepoints[i + 1])
-            print(f"{self.timepoints[i]} <= {self.timepoints[i + 1]}")
 
         activity_timepoints: List[Tuple[timing.Timepoint, cp_model.IntVar]] = []
         for activity_name in sorted(self.activities.keys()):
@@ -637,60 +642,22 @@ class CPSETimepoints(CPSEBaseEngine):
             activity_timepoints.append((activity.up_activity.start, activity.start))
             activity_timepoints.append((activity.up_activity.end, activity.end))
         self.assignment_matrix = {}
-        # position_vars = []
-        # all_comparison_vars = []
         for i in range(len(activity_timepoints)):
             up_tp_i, activity_timepoint_i = activity_timepoints[i]
-            # comparison_vars = []
-            # for j in range(len(activity_timepoints)):
-            #     if i == j:
-            #         continue
-
-            #     up_tp_j, activity_timepoint_j = activity_timepoints[j]
-            #     comparison_var = self.new_bool_var()
-            #     comparison_vars.append(comparison_var)
-            #     all_comparison_vars.append(comparison_var)
-            #     # self.model.add(
-            #     #     (activity_timepoint_i > activity_timepoint_j) == comparison_var
-            #     # )
-            #     self.model.add(
-            #         activity_timepoint_i > activity_timepoint_j
-            #     ).only_enforce_if(comparison_var)
-            #     print(
-            #         f"{comparison_var} => ({activity_timepoint_i} > {activity_timepoint_j})"
-            #     )
-
-            # position_var = self.model.new_int_var(0, len(activity_timepoints)-1, f"activity_tp{i}_position")
-            # position_vars.append(position_var)
-            # self.model.add(position_var == cp_model.LinearExpr.sum(comparison_vars))
-
+            # TODO: try to use add_map_domain()
             self.assignment_matrix[up_tp_i] = []
-            for idx, tp in enumerate(self.timepoints):
-                # if tp is idx-th <=> (tp_i == activity_timepoint_i)
-                # self.model.add((sum(comparison_vars) == idx) == (tp == activity_timepoint_i))
-                # self.model.add((sum(comparison_vars) == idx) == bool_var)
-                # self.model.add((tp == activity_timepoint_i) == bool_var)
-
+            for tp in self.timepoints:
                 bool_var = self.model.new_bool_var(f"{activity_timepoint_i}@{tp}")
                 self.assignment_matrix[up_tp_i].append(bool_var)
-                # self.model.add(
-                #     cp_model.LinearExpr.sum(comparison_vars) == idx
-                # ).only_enforce_if(bool_var)
                 self.model.add(tp == activity_timepoint_i).only_enforce_if(bool_var)
-                # print(f"{bool_var} => ({sum(comparison_vars)} == {idx})")
-                print(f"{bool_var} => ({tp} == {activity_timepoint_i})")
 
             # each activity timepoint is assigned to exactly one timepoint
-            print(f"exactly_one({self.assignment_matrix[up_tp_i]})")
             self.model.add_exactly_one(self.assignment_matrix[up_tp_i])
 
         # each timepoint is assigned to exactly one activity timepoint
         for i in range(len(self.timepoints)):
             self.model.add_exactly_one(
                 bool_vars[i] for bool_vars in self.assignment_matrix.values()
-            )
-            print(
-                f"exactly_one({[bool_vars[i] for bool_vars in self.assignment_matrix.values()]})"
             )
 
         # (num resources) x (num timepoints + 1)
@@ -767,7 +734,6 @@ class CPSETimepoints(CPSEBaseEngine):
 
             # TODO: use pairwise inequalities ?
             self.model.add_all_different(activity_timepoints)
-            print(f"all_different{activity_timepoints}")
 
             # add timepoints to visited_timepoints
             for i in range(len(activity_timepoints)):
@@ -785,14 +751,11 @@ class CPSETimepoints(CPSEBaseEngine):
                     visited_timepoints.add((str(t1), str(t2)))
                     visited_timepoints.add((str(t2), str(t1)))
 
-                    print(
-                        f"{self.model_vars[t1.timepoint]} != {self.model_vars[t2.timepoint]}"
-                    )
                     self.model.add(
                         self.model_vars[t1.timepoint] != self.model_vars[t2.timepoint]
                     )
 
-    def add_effect(self, timing: timing.Timing, effect: Effect):
+    def add_effect(self, timing: timing.Timing, effect: Effect, value: int):
         """
         Adds an effect to the model.
 
@@ -804,35 +767,27 @@ class CPSETimepoints(CPSEBaseEngine):
         Args:
             timing (timing.Timing): The specific timing at which the effect is applied.
             effect (Effect): The effect to apply.
+            value (int): The value associated with the effect. This may represent the sum
+                of increase/decrease effects or the exact value of the effect.
         """
 
         fluent_name = effect.fluent.fluent().name
-        value = effect.value.constant_value()
-        assert value >= 0
-        assert timing.delay == 0
+        if timing.delay != 0:
+            raise NotImplementedError("Timing delay not supported.")
 
         # TODO: support global timings and delays
-
-        if effect.is_decrease():
-            value = -value
 
         for i, bool_var in enumerate(self.assignment_matrix[timing.timepoint]):
             if effect.is_assignment():
                 self.model.add(
                     self.resources[fluent_name][i + 1] == value
                 ).only_enforce_if(bool_var)
-                print(
-                    f"{bool_var} => ({self.resources[fluent_name][i + 1]} == {value})"
-                )
 
             else:
                 self.model.add(
                     self.resources[fluent_name][i + 1]
                     == (self.resources[fluent_name][i] + value)
                 ).only_enforce_if(bool_var)
-                print(
-                    f"{bool_var} => ({self.resources[fluent_name][i + 1]} == {(self.resources[fluent_name][i] + value)})"
-                )
 
     def add_effects(self, problem: SchedulingProblem):
         """
@@ -845,13 +800,38 @@ class CPSETimepoints(CPSEBaseEngine):
 
         self.timepoints_setup(problem)
 
-        for act in problem.activities:
-            for timing, effects in act.effects.items():
-                for eff in effects:
-                    self.add_effect(timing, eff)
+        activities_effects = [
+            (timing, eff)
+            for act in problem.activities
+            for timing, effects in act.effects.items()
+            for eff in effects
+        ]
 
-        for i, (timing, eff) in enumerate(problem.base_effects):
-            self.add_effect(timing, eff)
+        # sum values of different effects that occur at the same timepoint
+        fluent_inc_dec_effects: Dict[str, Dict["timing.Timing", Effect]] = {}
+        for timing, eff in activities_effects + problem.base_effects:
+            eff: Effect
+            fluent_name = eff.fluent.fluent().name
+            value = eff.value.constant_value()
+            if eff.is_increase():
+                pass
+            elif eff.is_decrease():
+                value = -value
+            else:
+                self.add_effect(timing, eff, value)
+
+            if fluent_name not in fluent_inc_dec_effects:
+                fluent_inc_dec_effects[fluent_name] = {}
+
+            if timing not in fluent_inc_dec_effects[fluent_name]:
+                fluent_inc_dec_effects[fluent_name][timing] = [eff, value]
+            else:
+                # sum values of different effects that occur at the same timepoint
+                fluent_inc_dec_effects[fluent_name][timing][1] += value
+
+        for fluent_name in fluent_inc_dec_effects:
+            for timing, (eff, value) in fluent_inc_dec_effects[fluent_name].items():
+                self.add_effect(timing, eff, value)
 
         # for each resource
         #   for each timepoint
@@ -871,61 +851,100 @@ class CPSETimepoints(CPSEBaseEngine):
                     self.resources[fluent_name][i + 1] == self.resources[fluent_name][i]
                 ).only_enforce_if(bool_var)
                 self.model.add_bool_or(assignment_vars + [bool_var])
-                print(
-                    f"or({assignment_vars}) or ({self.resources[fluent_name][i + 1]} == {self.resources[fluent_name][i]})"
-                )
 
         self.add_assign_effect_constraints(problem)
 
+    def _fnode_contains_fluents(self, fnode: FNode) -> bool:
+        """
+        Checks if the specified FNode contains any fluent.
+
+        Returns:
+            bool: `True` if a fluent is found within the given `fnode`, otherwise `False`.
+        """
+        stack = [fnode]
+        while len(stack) > 0:
+            fnode = stack.pop()
+            if fnode.is_fluent_exp():
+                return True
+
+            if len(fnode.args) > 0:
+                for arg in fnode.args:
+                    stack.append(arg)
+
+        return False
+
     def add_condition(
-        self, time_interval: timing.TimeInterval, fnode: FNode, name: str
+        self,
+        time_interval: timing.TimeInterval,
+        fnode: FNode,
+        problem: SchedulingProblem,
     ):
-        """Adds a condition to the model: adds a constraint and enforces it is satisfied
-        in the time interval using the `add_cumulative` method."""
+        """Adds a condition to the model."""
 
-        # TODO: enforce condition using timepoints
-
-        bool_var = self.add_constraint(fnode)
-
-        start = self.model_vars[time_interval.lower.timepoint]
+        # TODO: support open intervals and delay
+        c = 0
         if time_interval.lower.delay != 0:
             assert isinstance(time_interval.lower.delay, int)
-            start += time_interval.lower.delay
+            c += time_interval.lower.delay
+            raise NotImplementedError("Timing delay not supported.")
         if time_interval.is_left_open():
-            start += 1
+            c += 1
+            raise NotImplementedError("Open intervals not supported.")
+        start = self.model_vars[time_interval.lower.timepoint] + c
 
-        # end + 1 because `add_cumulative` enforce the constraint for all t
-        # st. start <= t < end
-        end = self.model_vars[time_interval.upper.timepoint] + 1
+        c = 0
         if time_interval.upper.delay != 0:
             assert isinstance(time_interval.upper.delay, int)
-            end += time_interval.upper.delay
+            c += time_interval.upper.delay
+            raise NotImplementedError("Timing delay not supported.")
         if time_interval.is_right_open():
-            end -= 1
+            c -= 1
+            raise NotImplementedError("Open intervals not supported.")
+        end = self.model_vars[time_interval.upper.timepoint] + c
 
-        duration = self.model.new_int_var(
-            self.lower_bound,
-            self.upper_bound,
-            f"{name}_duration",
-        )
+        # if there are no fluents in the condition, a constraint should be added
+        if not self._fnode_contains_fluents(fnode):
+            constraint_var = self.add_constraint(fnode)
+            start_LE_end = self.new_bool_var()
+            self.model.add(start <= end).only_enforce_if(start_LE_end)
+            self.model.add(start > end).only_enforce_if(start_LE_end.negated())
+            self.model.add_bool_and(constraint_var).only_enforce_if(start_LE_end)
+            return
 
-        # TODO: reuse interval if present
-        interval_var = self.model.new_interval_var(start, duration, end, name)
-        self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
+        # for each timepoint, add the constraint on the fluents at that timepoint
+        # for each timepoint, add an implication:
+        #   (start <= timepoint <= end) => constraint
+        for i in range(len(self.timepoints)):
+            for fluent in problem.fluents:
+                self.model_vars[fluent] = self.resources[fluent.name][i + 1]
+
+            constraint_var = self.add_constraint(fnode)
+
+            tp_GE_start = self.new_bool_var()
+            tp_LE_end = self.new_bool_var()
+            self.model.add(self.timepoints[i] >= start).only_enforce_if(tp_GE_start)
+            self.model.add(self.timepoints[i] < start).only_enforce_if(
+                tp_GE_start.negated()
+            )
+            self.model.add(self.timepoints[i] <= end).only_enforce_if(tp_LE_end)
+            self.model.add(self.timepoints[i] > end).only_enforce_if(
+                tp_LE_end.negated()
+            )
+
+            # TODO: support conditions when multiple timepoints have the same time value
+
+            # (tp_GE_start and tp_LE_end) => constraint
+            self.model.add_bool_or(
+                [tp_GE_start.negated(), tp_LE_end.negated(), constraint_var]
+            )
 
     def add_conditions(self, problem: SchedulingProblem):
         """Adds the conditions defined in the problem and the activities to the model."""
 
-        # TODO: conditions cannot be defined on fluents
-
-        for i, (time_interval, fnode) in enumerate(problem.base_conditions):
-            name = f"base_condition{i}"
-            self.add_condition(time_interval, fnode, name)
+        for time_interval, fnode in problem.base_conditions:
+            self.add_condition(time_interval, fnode, problem)
 
         for act in problem.activities:
-            i = 0
             for time_interval in act.conditions:
                 for fnode in act.conditions[time_interval]:
-                    name = f"{act.name}_condition{i}"
-                    self.add_condition(time_interval, fnode, name)
-                    i += 1
+                    self.add_condition(time_interval, fnode, problem)
