@@ -246,6 +246,29 @@ def test_condition_with_TimePointInterval(problem: SchedulingProblem):
     assert res.plan.get(int_var).constant_value() == 5
 
 
+def test_condition_forcing_equal_timepoint_values(problem: SchedulingProblem):
+    activity1 = problem.add_activity("activity1", duration=10)
+    activity2 = problem.add_activity("activity2", duration=10)
+    activity3 = problem.add_activity("activity3", duration=10)
+    resource = problem.add_resource("resource", capacity=3)
+
+    # activity1.start == activity2.start == activity3.start == 0
+    problem.add_constraint(Equals(activity1.start, 0))
+    problem.add_constraint(Equals(activity2.start, 0))
+    problem.add_constraint(Equals(activity3.start, 0))
+
+    activity1.add_decrease_effect(activity1.start, resource, 1)
+    activity2.add_decrease_effect(activity2.start, resource, 1)
+    activity3.add_decrease_effect(activity3.start, resource, 1)
+
+    activity1.add_condition(
+        ClosedTimeInterval(Timing(0, activity1.start), Timing(0, activity1.start)),
+        Equals(resource, 0),
+    )
+
+    problem_solved_satisficing_or_optimally(problem)
+
+
 def test_condition_without_resources(problem: SchedulingProblem):
     activity1 = problem.add_activity("activity1", duration=10)
     activity2 = problem.add_activity("activity2", duration=10)

@@ -40,6 +40,7 @@ credits = Credits(
     "",
 )
 
+# TODO: remove unused keys
 _OPERATOR_MAP = {
     OperatorKind.AND: None,
     OperatorKind.OR: None,
@@ -522,9 +523,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self.model_vars[timing.GlobalStartTiming(delay=0).timepoint] = 0
         self.model_vars[timing.GlobalEndTiming().timepoint] = makespan_var
 
-        # add the effects to the model
+        # add problem-specific and activity-related effects to the model
         self.add_effects(problem)
-
         # add problem-specific and activity-related constraints to the model
         self.add_constraints(problem)
         # add problem-specific and activity-related conditions to the model
@@ -1055,10 +1055,8 @@ class CPSETimepoints(CPSEBaseEngine):
         # if there are no fluents in the condition, a constraint should be added
         if not self._fnode_contains_fluents(fnode):
             constraint_var = self.add_constraint(fnode)
-            start_LE_end = self.new_bool_var()
-            self.model.add(start <= end).only_enforce_if(start_LE_end)
-            self.model.add(start > end).only_enforce_if(start_LE_end.negated())
-            self.model.add_bool_and(constraint_var).only_enforce_if(start_LE_end)
+            self.model.add(start <= end).only_enforce_if(constraint_var)
+            self.model.add(start > end).only_enforce_if(constraint_var.negated())
             return
 
         # for each timepoint, add a constraint defined on the fluents at that timepoint
@@ -1081,12 +1079,28 @@ class CPSETimepoints(CPSEBaseEngine):
                 tp_LE_end.negated()
             )
 
-            # TODO: support conditions when multiple timepoints have the same time value
+            # if the next timepoint value is equal then the constraint should not be enforced
+            # because fluent values should be taken from the last timepoint with that value
+            if i + 1 >= len(self.timepoints):  # last timepoint
+                # (tp_GE_start and tp_LE_end) => constraint
+                self.model.add_bool_or(
+                    [tp_GE_start.negated(), tp_LE_end.negated(), constraint_var]
+                )
+            else:
+                next_timepoint_is_different = self.new_bool_var()
+                self.model.add(
+                    self.timepoints[i + 1] != self.timepoints[i]
+                ).only_enforce_if(next_timepoint_is_different)
+                self.model.add(
+                    self.timepoints[i + 1] == self.timepoints[i]
+                ).only_enforce_if(next_timepoint_is_different.negated())
 
-            # (tp_GE_start and tp_LE_end) => constraint
-            self.model.add_bool_or(
-                [tp_GE_start.negated(), tp_LE_end.negated(), constraint_var]
-            )
+                # (tp_GE_start and tp_LE_end) => constraint
+                self.model.add_bool_or(
+                    [tp_GE_start.negated(), tp_LE_end.negated(), constraint_var]
+                ).only_enforce_if(next_timepoint_is_different)
+
+            # self.timepoints[i+1] == self.timepoints[i]
 
     def add_conditions(self, problem: SchedulingProblem):
         """
