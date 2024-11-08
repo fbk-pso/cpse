@@ -208,126 +208,132 @@ def test_activity_constraints(problem: SchedulingProblem):
     )
 
 
-def test_problem_conditions(problem: SchedulingProblem):
+def test_condition_with_ClosedTimeInterval(problem: SchedulingProblem):
     activity = problem.add_activity("activity", duration=10)
-    bool_var = problem.add_variable(
-        "bool_var", get_environment().type_manager.BoolType()
-    )
+    resource = problem.add_resource("resource", capacity=2)
     int_var = problem.add_variable("int_var", get_environment().type_manager.IntType())
 
     problem.add_condition(
         ClosedTimeInterval(Timing(0, activity.start), Timing(0, activity.end)),
-        LE(5, int_var),
+        Equals(int_var, 5),
     )
-    problem.add_condition(
-        TimeInterval(
-            lower=Timing(
-                delay=0, timepoint=Timepoint(TimepointKind.GLOBAL_START, container=None)
-            ),
-            upper=Timing(
-                delay=0, timepoint=Timepoint(TimepointKind.GLOBAL_END, container=None)
-            ),
-            is_left_open=True,
-            is_right_open=True,
-        ),
-        LE(int_var, 10),
+
+    activity.add_decrease_effect(activity.start, resource, 1)
+    activity.add_condition(
+        ClosedTimeInterval(Timing(0, activity.start), Timing(0, activity.end)),
+        Equals(resource, 1),
     )
-    problem.add_condition(
-        TimeInterval(
-            lower=Timing(1, activity.start),
-            upper=Timing(2, activity.end),
-            is_left_open=True,
-            is_right_open=True,
-        ),
-        Implies(LE(int_var, 15), bool_var),
-    )
-    problem.add_condition(
-        TimeInterval(
-            lower=GlobalStartTiming(10),
-            upper=GlobalStartTiming(15),
-            is_left_open=True,
-            is_right_open=False,
-        ),
-        bool_var,
-    )
+
     res = problem_solved_satisficing_or_optimally(problem)
-    assert 5 <= res.plan.get(int_var).constant_value() <= 10
-    assert res.plan.get(bool_var).constant_value()
+    assert res.plan.get(int_var).constant_value() == 5
 
 
-def test_activity_conditions(problem: SchedulingProblem):
+def test_condition_with_TimePointInterval(problem: SchedulingProblem):
+    resource = problem.add_resource("resource", capacity=2)
     activity = problem.add_activity("activity", duration=10)
-    bool_var = problem.add_variable(
-        "bool_var", get_environment().type_manager.BoolType()
-    )
+    activity.uses(resource, 1)
     int_var = problem.add_variable("int_var", get_environment().type_manager.IntType())
 
-    activity.add_condition(
-        TimeInterval(
-            lower=Timing(delay=1, timepoint=activity.start),
-            upper=Timing(delay=0, timepoint=activity.end),
-            is_left_open=True,
-            is_right_open=False,
-        ),
-        LE(int_var, 10),
+    problem.add_condition(
+        TimePointInterval(Timing(0, activity.start)),
+        Equals(int_var, 5),
     )
     activity.add_condition(
-        TimePointInterval(Timing(3, activity.start)),
-        LE(5, int_var),
+        TimePointInterval(Timing(0, activity.start)),
+        Equals(resource, 1),
     )
-    activity.add_condition(
-        OpenTimeInterval(Timing(3, activity.start), Timing(-2, activity.end)),
-        LE(5, int_var),
-    )
-    activity.add_condition(
-        ClosedTimeInterval(Timing(3, activity.start), Timing(-2, activity.end)),
-        LE(5, int_var),
-    )
-    activity.add_condition(
-        LeftOpenTimeInterval(Timing(3, activity.start), Timing(-2, activity.end)),
-        LE(5, int_var),
-    )
-    activity.add_condition(
-        RightOpenTimeInterval(Timing(3, activity.start), Timing(-2, activity.end)),
-        LE(5, int_var),
-    )
-
-    problem.add_constraint(Implies(And(LE(1, int_var), LE(int_var, 20)), bool_var))
     res = problem_solved_satisficing_or_optimally(problem)
-    assert 5 <= res.plan.get(int_var).constant_value() <= 10
-    assert res.plan.get(bool_var).constant_value()
+    assert res.plan.get(int_var).constant_value() == 5
 
 
-# TODO
-# def test_problem_effects(problem: SchedulingProblem):
-#     resource = problem.add_resource("resource", capacity=1)
-#     activity = problem.add_activity("activity", duration=20)
+def test_condition_without_resources(problem: SchedulingProblem):
+    activity1 = problem.add_activity("activity1", duration=10)
+    activity2 = problem.add_activity("activity2", duration=10)
+    int_var = problem.add_variable("int_var", get_environment().type_manager.IntType())
 
-#     problem.add_decrease_effect(activity.start, resource, 1)
-#     problem.add_increase_effect(10, resource, 1)
+    problem.add_constraint(LT(activity1.end, activity2.start))
 
-#     res = problem_solved_satisficing_or_optimally(problem)
-#     assert res.plan.get(activity.start).constant_value() <= 10
+    # these two conditions act as constraints since no resources are involved
+    problem.add_condition(
+        ClosedTimeInterval(Timing(0, activity1.start), Timing(0, activity1.end)),
+        Equals(int_var, 5),
+    )
+    problem.add_condition(
+        ClosedTimeInterval(Timing(0, activity2.start), Timing(0, activity2.end)),
+        Equals(int_var, 4),
+    )
+    problem_unsolvable(problem)
 
 
-# def test_activity_effects(problem: SchedulingProblem):
-#     resource = problem.add_resource("resource", capacity=4)
-#     problem.set_initial_value(resource, 0)
+def test_condition_with_invalid_interval(problem: SchedulingProblem):
+    activity = problem.add_activity("activity", duration=10)
+    resource = problem.add_resource("resource", capacity=2)
+    int_var = problem.add_variable("int_var", get_environment().type_manager.IntType())
 
-#     activity1 = problem.add_activity("activity1", duration=4)
-#     activity2 = problem.add_activity("activity2", duration=4)
-#     activity3 = problem.add_activity("activity3", duration=4)
+    # this condition should not be applied since the interval is [activity.end, activity.start]
+    problem.add_condition(
+        ClosedTimeInterval(Timing(0, activity.end), Timing(0, activity.start)),
+        Equals(int_var, 5),
+    )
+    problem.add_constraint(Equals(int_var, 4))
 
-#     problem.add_increase_effect(10, resource, 2)
-#     activity1.add_decrease_effect(activity1.start, resource, 2)
+    # this condition should not be applied since the interval is [activity.end, activity.start]
+    activity.add_condition(
+        ClosedTimeInterval(Timing(0, activity.end), Timing(0, activity.start)),
+        Equals(resource, 1),
+    )
 
-#     problem.add_increase_effect(20, resource, 3)
-#     activity2.add_decrease_effect(activity2.start, resource, 3)
+    res = problem_solved_satisficing_or_optimally(problem)
+    assert res.plan.get(int_var).constant_value() == 4
 
-#     problem.add_increase_effect(30, resource, 4)
-#     activity3.add_decrease_effect(activity3.start, resource, 4)
 
-#     problem_solved_satisficing_or_optimally(problem)
+# TODO: global timings and delays not supported
+def test_problem_effects(problem: SchedulingProblem):
+    resource = problem.add_resource("resource", capacity=2)
+    activity1 = problem.add_activity("activity1", duration=20)
+    activity2 = problem.add_activity("activity2", duration=10)
+
+    problem.add_decrease_effect(activity1.start, resource, 2)
+    problem.add_increase_effect(activity1.end, resource, 1)
+    problem.add_decrease_effect(activity2.start, resource, 1)
+    problem.add_effect(activity2.end, resource, 1)
+
+    # should be activity1.start <= activity1.end
+    problem.add_constraint(LE(activity2.end, activity1.start))
+    problem_unsolvable(problem)
+
+
+def test_activity_effects(problem: SchedulingProblem):
+    resource = problem.add_resource("resource", capacity=4)
+    problem.set_initial_value(resource, 0)
+
+    activity1 = problem.add_activity("activity1", duration=4)
+    activity2 = problem.add_activity("activity2", duration=5)
+    activity3 = problem.add_activity("activity3", duration=6)
+
+    activity1.add_effect(activity1.end, resource, 2)
+
+    activity2.add_decrease_effect(activity2.start, resource, 2)
+    problem.add_increase_effect(activity2.end, resource, 4)
+
+    activity3.add_decrease_effect(activity3.start, resource, 4)
+
+    # should be activity1.end <= activity2.start <= activity2.end <= activity3.start
+    problem.add_constraint(
+        Not(And(LE(activity1.end, activity2.start), LE(activity2.end, activity3.start)))
+    )
+
+    problem_unsolvable(problem)
+
+
+def test_multiple_effects_at_the_same_timepoint(problem: SchedulingProblem):
+    resource = problem.add_resource("resource", capacity=2)
+    activity = problem.add_activity("activity", duration=20)
+
+    problem.add_decrease_effect(activity.start, resource, 2)
+    problem.add_increase_effect(activity.start, resource, 1)
+
+    problem_solved_satisficing_or_optimally(problem)
 
 
 def test_minimize_makespan(problem: SchedulingProblem):
