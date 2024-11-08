@@ -20,6 +20,7 @@ from unified_planning.model import (
     timing,
     ProblemKind,
     Effect,
+    Fluent,
 )
 from unified_planning.model.scheduling import SchedulingProblem, Activity
 from unified_planning.model.metrics import MinimizeMakespan
@@ -76,7 +77,24 @@ activity_type = collections.namedtuple(
 
 
 class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
-    """CPSE Base Engine abstract class."""
+    """
+    CPSE Base Engine abstract class.
+
+    This class extends the functionality of `up.engines.Engine` and
+    `up.engines.mixins.OneshotPlannerMixin`.
+
+    Attributes:
+        lower_bound (int): The minimum bound for variables in the model, defaulting to 0.
+        upper_bound (int): The maximum bound for variables in the model, defaulting to INT32_MAX.
+        model (cp_model.CpModel): The underlying constraint programming model.
+        activities (Dict[str, activity_type]): A dictionary of activities keyed by name.
+        model_vars (Dict[Union[timing.Timepoint, Parameter, Fluent], cp_model.IntVar]): A mapping
+            of timepoints, parameters and fluents to the corresponding integer variables in the model.
+        fluent_capacity (Dict[str, int]): A dictionary defining the maximum capacity for each fluent.
+        fluent_initial_value (Dict[str, int]): A dictionary defining the initial value for each fluent.
+        bool_var_counter (int): A counter for generating anonymous boolean variables.
+        int_var_counter (int): A counter for generating anonymous integer variables.
+    """
 
     def __init__(self, **kwargs):
         up.engines.Engine.__init__(self)
@@ -87,7 +105,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self.model = cp_model.CpModel()
 
         self.activities: Dict[str, activity_type] = {}
-        self.model_vars: Dict[Union[timing.Timepoint, Parameter], cp_model.IntVar] = {}
+        self.model_vars: Dict[
+            Union[timing.Timepoint, Parameter, Fluent], cp_model.IntVar
+        ] = {}
         self.fluent_capacity: Dict[str, int] = {}
         self.fluent_initial_value: Dict[str, int] = {}
 
@@ -132,25 +152,51 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         return problem_kind <= CPSE.supported_kind()
 
     def new_bool_var(self) -> cp_model.IntVar:
-        """Add a new anonymous boolean variable to the model."""
+        """
+        Adds a new anonymous boolean variable to the model.
+
+        Returns:
+            cp_model.IntVar: A new integer variable bounded in [0,1].
+        """
+
         self.bool_var_counter += 1
         return self.model.new_bool_var(f"bool{self.bool_var_counter}")
 
     def new_int_var(self) -> cp_model.IntVar:
-        """Add a new anonymous integer variable to the model."""
+        """
+        Adds a new anonymous integer variable to the model.
+
+        Returns:
+            cp_model.IntVar: A new integer variable.
+        """
+
         self.int_var_counter += 1
         return self.model.new_int_var(
             self.lower_bound, self.upper_bound, f"int{self.int_var_counter}"
         )
 
     def _convert_timing_to_linear_expr(self, t: timing.Timing) -> cp_model.LinearExprT:
-        """Convert a `timing.Timing` variable to a `cp_model.LinearExprT`."""
+        """
+        Converts a `timing.Timing` variable to a `cp_model.LinearExprT`.
+
+        Args:
+            t (timing.Timing): The timing variable.
+
+        Returns:
+            cp_model.LinearExprT: The corresponding linear expression in the model.
+        """
+
         assert t.timepoint in self.model_vars
         assert isinstance(t.delay, int)
         return cp_model.LinearExpr.sum([self.model_vars[t.timepoint], t.delay])
 
     def add_parameters(self, parameters: List[Parameter]):
-        """Add the parameters to the model as boolean or integer variables."""
+        """
+        Adds the parameters to the model as boolean or integer variables.
+
+        Args:
+            parameters (List[Parameter]): A list of parameters to be added to the model.
+        """
 
         for param in parameters:
             if param.type.is_bool_type():
@@ -166,7 +212,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             self.model_vars[param] = var
 
     def add_activity(self, activity: Activity):
-        """Add an activity to the model. Each activity is modeled using an interval."""
+        """
+        Adds an activity to the model. Each activity is modeled using an interval.
+
+        Args:
+            activity (Activity): The activity to be added to the model.
+        """
 
         # assume FixedDuration or ClosedDurationInterval
         assert (
@@ -205,8 +256,23 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     def add_constraint(
         self, fnode: FNode
-    ) -> Union[cp_model.IntVar, cp_model.LinearExprT, bool, int, Any]:
-        """Add the constraint represented by the fnode to the model."""
+    ) -> Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+        """
+        Adds the constraint represented by the given FNode to the model.
+
+        The constraint expression is processed recursively from the leaves of
+        the expression tree to the root node. For each boolean expression, a
+        boolean variable is created to represent the expression itself, which
+        is then used in the parent node.
+
+        Args:
+            fnode (FNode): The FNode representing the constraint to be added.
+                The constraint must be a boolean expression.
+
+        Returns:
+            Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+                A boolean variable (or its negation) representing the constraint.
+        """
 
         # TODO: reuse bool_var for the same constraint
         # TODO: transform to normal form?
@@ -335,14 +401,24 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
 
         assert len(results) == 1
+        assert isinstance(results[0], cp_model.IntVar) or isinstance(
+            results[0], cp_model._NotBooleanVariable
+        )
         return results[0]
 
     def add_constraints(self, problem: SchedulingProblem):
-        """Add the problem constraints to the model."""
+        """
+        Adds all constraints from the given scheduling problem to the model.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing the
+                constraints to be added to the model.
+        """
 
         # TODO: avoid bool_var for the root node
 
         for fnode in problem.base_constraints:
+            print(fnode)
             bool_var = self.add_constraint(fnode)
             self.model.add_bool_and([bool_var])
 
@@ -353,18 +429,42 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     @abstractmethod
     def add_effects(self, problem: SchedulingProblem):
-        """Add the problem effects to the model."""
+        """
+        Adds the effects of the given scheduling problem to the model.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing the
+                effects to be applied to the model.
+        """
+
         raise NotImplementedError
 
     @abstractmethod
     def add_conditions(self, problem: SchedulingProblem):
-        """Add the problem conditions to the model."""
+        """
+        Adds the conditions of the given scheduling problem to the model.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing the
+                conditions to be added to the model.
+        """
+
         raise NotImplementedError
 
     def add_quality_metrics(
         self, problem: SchedulingProblem, makespan_var: cp_model.IntVar
     ):
-        """Add the quality metrics to the model."""
+        """
+        Adds quality metrics to the model based on the given scheduling problem.
+
+        Currently, only minimizing the makespan is supported as a quality metric.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing
+                the quality metrics.
+            makespan_var (cp_model.IntVar): The variable representing the
+                makespan of the schedule, used to define the quality metrics.
+        """
 
         for metric in problem.quality_metrics:
             if isinstance(metric, MinimizeMakespan):
@@ -490,7 +590,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
 
 class CPSE(CPSEBaseEngine):
-    """Implementation of the CPSE Engine."""
+    """
+    Implementation of the CPSE Engine.
+
+    This class extends the `CPSEBaseEngine` and provides concrete implementations
+    for the abstract methods defined in the base class.
+    """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -500,8 +605,17 @@ class CPSE(CPSEBaseEngine):
         return "CPSE"
 
     def add_effects(self, problem: SchedulingProblem):
-        """Add a reservoir constraint for each fluent. The value of the fluent
-        is constrained to remain between [0, C] where C is its maximum capacity."""
+        """
+        Adds the effects of the given scheduling problem to the model.
+
+        Adds a reservoir constraint for each fluent in the scheduling problem.
+        Each fluent's value is constrained to remain within the range [0, C],
+        where C is the maximum capacity of the fluent.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing the
+                effects to be applied to the model.
+        """
 
         # TODO: model conditions on effects
 
@@ -512,7 +626,7 @@ class CPSE(CPSEBaseEngine):
             for eff in effects
         ]
 
-        # map each fluent to its effects
+        # map each fluent to its effects, adjusting values based on increase/decrease types
         fluent_effects: Dict[str, Dict["timing.Timing", int]] = {}
         for timing, eff in activities_effects + problem.base_effects:
             fluent_name = eff.fluent.fluent().name
@@ -551,8 +665,18 @@ class CPSE(CPSEBaseEngine):
     def add_condition(
         self, time_interval: timing.TimeInterval, fnode: FNode, name: str
     ):
-        """Add a condition to the model. Add a constraint and enforce it is satisfied
-        in the time interval using the `add_cumulative` method."""
+        """
+        Adds a condition to the model, enforcing that it is satisfied within a specified time interval.
+
+        This method creates a constraint based on the given condition and uses the `add_cumulative`
+        method to ensure it holds throughout the specified time interval.
+
+        Args:
+            time_interval (timing.TimeInterval): The time interval during which the condition
+                must be satisfied.
+            fnode (FNode): The FNode representing the condition to be added as a constraint.
+            name (str): The name of the condition for identification within the model.
+        """
 
         bool_var = self.add_constraint(fnode)
 
@@ -564,8 +688,8 @@ class CPSE(CPSEBaseEngine):
             c += 1
         start = self.model_vars[time_interval.lower.timepoint] + c
 
-        # end + 1 because `add_cumulative` enforce the constraint for all t
-        # st. start <= t < end
+        # add 1 to end because `add_cumulative` enforces the constraint for t in [start, end),
+        # but we want the constraint to be enforced also at the end
         c = 1
         if time_interval.upper.delay != 0:
             assert isinstance(time_interval.upper.delay, int)
@@ -585,7 +709,13 @@ class CPSE(CPSEBaseEngine):
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
 
     def add_conditions(self, problem: SchedulingProblem):
-        """Add the conditions defined in the problem and the activities to the model."""
+        """
+        Adds the conditions of the given scheduling problem to the model.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing the
+                conditions to be added to the model.
+        """
 
         # TODO: conditions cannot be defined on fluents
 
@@ -603,7 +733,23 @@ class CPSE(CPSEBaseEngine):
 
 
 class CPSETimepoints(CPSEBaseEngine):
-    """Implementation of the CPSE Engine using an ordered list of timepoints."""
+    """
+    Implementation of the CPSE Engine using an ordered list of timepoints.
+
+    This class extends the `CPSEBaseEngine` and models a `SchedulingProblem` by defining
+    an ordered list of timepoints. Each activity's start and end timepoints are mapped
+    to distinct timepoints within this list.
+
+    Attributes:
+        timepoints (List[cp_model.IntVar]): An ordered list of timepoints in the model.
+        assignment_matrix (Dict[timing.Timepoint, List[cp_model.IntVar]]): A mapping from
+            each timepoint to a list of boolean assignment variables.
+            It represents a square binary matrix, where each row and column contains
+            exactly one entry of `1` with all other entries being `0`, indicating the
+            assignment of each timepoint to a unique activity timepoint.
+        resources (Dict[str, List[cp_model.IntVar]]): A dictionary tracking resource value
+            at each timepoint.
+    """
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -618,12 +764,8 @@ class CPSETimepoints(CPSEBaseEngine):
 
     def timepoints_setup(self, problem: SchedulingProblem):
         """
-        Generates an ordered list of timepoints and associates them with activity
-        timepoints using a boolean assignment matrix. This matrix indicates which
-        timepoints correspond to each activity start/end timepoint.
-
-        For each resource, a list of integer variables is created to hold the values
-        at each timepoint.
+        Defines the constraints that links each activity timepoint (start or end)
+        to exactly one timepoint in the `timepoints` list.
 
         Args:
             problem (SchedulingProblem): The scheduling problem.
@@ -879,7 +1021,15 @@ class CPSETimepoints(CPSEBaseEngine):
         fnode: FNode,
         problem: SchedulingProblem,
     ):
-        """Adds a condition to the model."""
+        """
+        Adds a condition to the model, enforcing that it is satisfied within a specified time interval.
+
+        Args:
+            time_interval (timing.TimeInterval): The time interval during which the condition
+                must be satisfied.
+            fnode (FNode): The FNode representing the condition to be added as a constraint.
+            name (str): The name of the condition for identification within the model.
+        """
 
         # TODO: support open intervals and delay
         c = 0
@@ -911,8 +1061,8 @@ class CPSETimepoints(CPSEBaseEngine):
             self.model.add_bool_and(constraint_var).only_enforce_if(start_LE_end)
             return
 
-        # for each timepoint, add the constraint on the fluents at that timepoint
-        # for each timepoint, add an implication:
+        # for each timepoint, add a constraint defined on the fluents at that timepoint
+        # and enforce:
         #   (start <= timepoint <= end) => constraint
         for i in range(len(self.timepoints)):
             for fluent in problem.fluents:
@@ -939,7 +1089,13 @@ class CPSETimepoints(CPSEBaseEngine):
             )
 
     def add_conditions(self, problem: SchedulingProblem):
-        """Adds the conditions defined in the problem and the activities to the model."""
+        """
+        Adds the conditions of the given scheduling problem to the model.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing the
+                conditions to be added to the model.
+        """
 
         for time_interval, fnode in problem.base_conditions:
             self.add_condition(time_interval, fnode, problem)
