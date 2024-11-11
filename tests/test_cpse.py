@@ -329,6 +329,22 @@ def test_activity_effects(problem: SchedulingProblem):
     problem_solved_satisficing_or_optimally(problem)
 
 
+def test_conditional_effects(problem: SchedulingProblem):
+    resource = problem.add_resource("resource", capacity=2)
+    problem.set_initial_value(resource, 0)
+
+    activity1 = problem.add_activity("activity1", duration=20)
+    activity2 = problem.add_activity("activity2", duration=20)
+
+    problem.add_increase_effect(
+        activity1.start, resource, 1, condition=LE(10, activity1.start)
+    )
+    problem.add_decrease_effect(activity2.start, resource, 1)
+
+    res = problem_solved_satisficing_or_optimally(problem)
+    assert res.plan.get(activity1.start).constant_value() >= 10
+
+
 def test_minimize_makespan(problem: SchedulingProblem):
     resource = problem.add_resource("resource", capacity=1)
     duration = 10

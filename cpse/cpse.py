@@ -419,7 +419,6 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         # TODO: avoid bool_var for the root node
 
         for fnode in problem.base_constraints:
-            print(fnode)
             bool_var = self.add_constraint(fnode)
             self.model.add_bool_and([bool_var])
 
@@ -617,8 +616,6 @@ class CPSE(CPSEBaseEngine):
                 effects to be applied to the model.
         """
 
-        # TODO: model conditions on effects
-
         activities_effects = [
             (timing, eff)
             for act in problem.activities
@@ -627,10 +624,19 @@ class CPSE(CPSEBaseEngine):
         ]
 
         # map each fluent to its effects, adjusting values based on increase/decrease types
-        fluent_effects: Dict[str, Dict["timing.Timing", int]] = {}
+        fluent_effects: Dict[
+            str, List[Tuple["timing.Timing", int, cp_model.IntVar]]
+        ] = {}
         for timing, eff in activities_effects + problem.base_effects:
+            eff: Effect
             fluent_name = eff.fluent.fluent().name
             value = eff.value.constant_value()
+            if value == 0:  # if value is 0, the effect is ignored
+                continue
+
+            if fluent_name not in fluent_effects:
+                fluent_effects[fluent_name] = []
+
             if eff.is_increase():
                 pass
             elif eff.is_decrease():
@@ -638,28 +644,23 @@ class CPSE(CPSEBaseEngine):
             else:
                 raise NotImplementedError(f"Effect kind {eff.kind} not supported.")
 
-            if fluent_name not in fluent_effects:
-                fluent_effects[fluent_name] = {}
-
-            if timing not in fluent_effects[fluent_name]:
-                fluent_effects[fluent_name][timing] = value
+            if eff.is_conditional():
+                bool_var = self.add_constraint(eff.condition)
+                fluent_effects[fluent_name].append((timing, value, bool_var))
             else:
-                # sum values of different effects that occur at the same timepoint
-                fluent_effects[fluent_name][timing] += value
+                fluent_effects[fluent_name].append((timing, value, True))
 
-        # add a reservoir constraint for each fluent: the value of the fluent
-        # should remain between [0, C] where C is its maximum capacity
         for fluent_name in fluent_effects:
             times = [0]
             values = [self.fluent_initial_value[fluent_name]]
-            for timing in fluent_effects[fluent_name]:
-                value = fluent_effects[fluent_name][timing]
-                if value != 0:  # when value is 0, the effect is ignored
-                    times.append(self._convert_timing_to_linear_expr(timing))
-                    values.append(value)
+            actives = [True]
+            for timing, value, active in fluent_effects[fluent_name]:
+                times.append(self._convert_timing_to_linear_expr(timing))
+                values.append(value)
+                actives.append(active)
 
-            self.model.add_reservoir_constraint(
-                times, values, 0, self.fluent_capacity[fluent_name]
+            self.model.add_reservoir_constraint_with_active(
+                times, values, actives, 0, self.fluent_capacity[fluent_name]
             )
 
     def add_condition(
@@ -940,6 +941,13 @@ class CPSETimepoints(CPSEBaseEngine):
             problem (SchedulingProblem): The scheduling problem
         """
 
+        # TODO: model conditional effects
+        # conditional effects:
+        # model value as List[int_var], where len is num effects at that timepoint on that fluent
+        # for each effect:
+        #   condition => value = prev_value + v
+        #   not condition => value = prev_value
+
         self.timepoints_setup(problem)
 
         activities_effects = [
@@ -1068,6 +1076,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
             constraint_var = self.add_constraint(fnode)
 
+            # TODO: tp_GE_start and tp_LE_end should be cached
             tp_GE_start = self.new_bool_var()
             tp_LE_end = self.new_bool_var()
             self.model.add(self.timepoints[i] >= start).only_enforce_if(tp_GE_start)
@@ -1087,6 +1096,7 @@ class CPSETimepoints(CPSEBaseEngine):
                     [tp_GE_start.negated(), tp_LE_end.negated(), constraint_var]
                 )
             else:
+                # TODO: next_timepoint_is_different should be cached
                 next_timepoint_is_different = self.new_bool_var()
                 self.model.add(
                     self.timepoints[i + 1] != self.timepoints[i]
