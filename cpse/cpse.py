@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unified Planning Integration for OR-Tools CP-SAT Model"""
-from typing import IO, Callable, Optional, List, Tuple, Union, Any, Dict
+from typing import IO, Callable, Optional, List, Tuple, Union, Dict
 from abc import abstractmethod
 import collections
 import operator
@@ -115,6 +115,11 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self.bool_var_counter: int = -1
         self.int_var_counter: int = -1
 
+        # cache model variables accessed multiple times
+        self._variables_cache: Dict[
+            str, Union[cp_model.IntVar, cp_model.IntervalVar]
+        ] = {}
+
     @staticmethod
     def get_credits(**kwargs) -> Optional["Credits"]:
         return credits
@@ -125,6 +130,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     @staticmethod
     def supported_kind() -> ProblemKind:
+        # TODO: cpse supports conditional effects
         supported_kind = ProblemKind()
         supported_kind.set_problem_class("SCHEDULING")
         supported_kind.set_problem_type("SIMPLE_NUMERIC_PLANNING")
@@ -254,9 +260,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         )
         self.model_vars[activity.start] = start_var
         self.model_vars[activity.end] = end_var
+        self._variables_cache[f"interval [{activity.start}, {activity.end}]"] = (
+            interval_var
+        )
 
     def add_constraint(
-        self, fnode: FNode
+        self, fnode: FNode, cache_enabled=True
     ) -> Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
         """
         Adds the constraint represented by the given FNode to the model.
@@ -275,9 +284,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 A boolean variable (or its negation) representing the constraint.
         """
 
-        # TODO: reuse bool_var for the same constraint
-        # TODO: transform to normal form?
-        # TODO: use cache
+        # TODO(cpse-timepoints): cannot use cache on fnodes with fluents
 
         stack = [(fnode, False)]
         results = []
@@ -285,7 +292,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         while len(stack) > 0:
             fnode, processed = stack.pop()
 
-            if fnode.is_parameter_exp():
+            # check if fnode cached
+            if cache_enabled and not processed and repr(fnode) in self._variables_cache:
+                print("hit", repr(fnode))
+                results.append(self._variables_cache[repr(fnode)])
+
+            elif fnode.is_parameter_exp():
                 results.append(self.model_vars[fnode.parameter()])
 
             elif fnode.is_timing_exp():
@@ -366,6 +378,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     )
 
                 results.append(bool_var)
+                if cache_enabled:
+                    self._variables_cache[repr(fnode)] = bool_var
 
             elif fnode.node_type in [
                 OperatorKind.LE,
@@ -397,6 +411,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     )
 
                 results.append(bool_var)
+                if cache_enabled:
+                    self._variables_cache[repr(fnode)] = bool_var
 
             else:
                 raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
@@ -407,6 +423,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         )
         return results[0]
 
+    @abstractmethod
     def add_constraints(self, problem: SchedulingProblem):
         """
         Adds all constraints from the given scheduling problem to the model.
@@ -416,16 +433,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 constraints to be added to the model.
         """
 
-        # TODO: avoid bool_var for the root node
-
-        for fnode in problem.base_constraints:
-            bool_var = self.add_constraint(fnode)
-            self.model.add_bool_and([bool_var])
-
-        for act in problem.activities:
-            for fnode in act.constraints:
-                bool_var = self.add_constraint(fnode)
-                self.model.add_bool_and([bool_var])
+        raise NotImplementedError
 
     @abstractmethod
     def add_effects(self, problem: SchedulingProblem):
@@ -603,6 +611,26 @@ class CPSE(CPSEBaseEngine):
     def name(self) -> str:
         return "CPSE"
 
+    def add_constraints(self, problem: SchedulingProblem):
+        """
+        Adds all constraints from the given scheduling problem to the model.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing the
+                constraints to be added to the model.
+        """
+
+        # TODO: avoid bool_var for the root node
+
+        for fnode in problem.base_constraints:
+            bool_var = self.add_constraint(fnode)
+            self.model.add_bool_and([bool_var])
+
+        for act in problem.activities:
+            for fnode in act.constraints:
+                bool_var = self.add_constraint(fnode)
+                self.model.add_bool_and([bool_var])
+
     def add_effects(self, problem: SchedulingProblem):
         """
         Adds the effects of the given scheduling problem to the model.
@@ -681,32 +709,36 @@ class CPSE(CPSEBaseEngine):
 
         bool_var = self.add_constraint(fnode)
 
-        c = 0
+        delay_start = 0
         if time_interval.lower.delay != 0:
             assert isinstance(time_interval.lower.delay, int)
-            c += time_interval.lower.delay
+            delay_start += time_interval.lower.delay
         if time_interval.is_left_open():
-            c += 1
-        start = self.model_vars[time_interval.lower.timepoint] + c
+            delay_start += 1
+        start = self.model_vars[time_interval.lower.timepoint] + delay_start
 
         # add 1 to end because `add_cumulative` enforces the constraint for t in [start, end),
         # but we want the constraint to be enforced also at the end
-        c = 1
+        delay_end = 1
         if time_interval.upper.delay != 0:
             assert isinstance(time_interval.upper.delay, int)
-            c += time_interval.upper.delay
+            delay_end += time_interval.upper.delay
         if time_interval.is_right_open():
-            c -= 1
-        end = self.model_vars[time_interval.upper.timepoint] + c
+            delay_end -= 1
+        end = self.model_vars[time_interval.upper.timepoint] + delay_end
 
-        duration = self.model.new_int_var(
-            self.lower_bound,
-            self.upper_bound,
-            f"{name}_duration",
-        )
-
-        # TODO: reuse interval if present
-        interval_var = self.model.new_interval_var(start, duration, end, name)
+        interval_key = f"interval [{time_interval.lower.timepoint} + {delay_start}, {time_interval.upper.timepoint} + {delay_end}]"
+        if interval_key not in self._variables_cache:
+            duration = self.model.new_int_var(
+                self.lower_bound,
+                self.upper_bound,
+                f"{name}_duration",
+            )
+            interval_var = self.model.new_interval_var(start, duration, end, name)
+            self._variables_cache[interval_key] = interval_var
+        else:
+            print("hit", interval_key)
+        interval_var = self._variables_cache[interval_key]
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
 
     def add_conditions(self, problem: SchedulingProblem):
@@ -717,8 +749,6 @@ class CPSE(CPSEBaseEngine):
             problem (SchedulingProblem): The scheduling problem containing the
                 conditions to be added to the model.
         """
-
-        # TODO: conditions cannot be defined on fluents
 
         for i, (time_interval, fnode) in enumerate(problem.base_conditions):
             name = f"base_condition{i}"
@@ -815,6 +845,33 @@ class CPSETimepoints(CPSEBaseEngine):
                     f"{fluent.name}@{self.timepoints[i]}",
                 )
                 self.resources[fluent.name].append(resource_var)
+
+    def add_constraints(self, problem: SchedulingProblem):
+        """
+        Adds all constraints from the given scheduling problem to the model.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing the
+                constraints to be added to the model.
+        """
+
+        # TODO: avoid bool_var for the root node
+
+        constraints = problem.base_constraints + [
+            fnode for act in problem.activities for fnode in act.constraints
+        ]
+
+        for fnode in constraints:
+            if not self._fnode_contains_fluents(fnode):
+                bool_var = self.add_constraint(fnode)
+                self.model.add_bool_and([bool_var])
+            else:
+                # for each timepoint, add a constraint defined on the fluents at that timepoint
+                for i in range(len(self.timepoints)):
+                    for fluent in problem.fluents:
+                        self.model_vars[fluent] = self.resources[fluent.name][i + 1]
+                    bool_var = self.add_constraint(fnode, cache_enabled=False)
+                    self.model.add_bool_and([bool_var])
 
     def _filter_fluent_effects(
         self, problem: SchedulingProblem, fluent_name: str
@@ -1000,6 +1057,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 self.model.add(
                     self.resources[fluent_name][i + 1] == self.resources[fluent_name][i]
                 ).only_enforce_if(bool_var)
+                # not(assignment_vars[0] or ... or assignment_vars[-1]) => bool_var
                 self.model.add_bool_or(assignment_vars + [bool_var])
 
         self.add_assign_effect_constraints(problem)
@@ -1040,25 +1098,17 @@ class CPSETimepoints(CPSEBaseEngine):
         """
 
         # TODO: support open intervals and delay
-        c = 0
         if time_interval.lower.delay != 0:
-            assert isinstance(time_interval.lower.delay, int)
-            c += time_interval.lower.delay
             raise NotImplementedError("Timing delay not supported.")
         if time_interval.is_left_open():
-            c += 1
             raise NotImplementedError("Open intervals not supported.")
-        start = self.model_vars[time_interval.lower.timepoint] + c
+        start = self.model_vars[time_interval.lower.timepoint]
 
-        c = 0
         if time_interval.upper.delay != 0:
-            assert isinstance(time_interval.upper.delay, int)
-            c += time_interval.upper.delay
             raise NotImplementedError("Timing delay not supported.")
         if time_interval.is_right_open():
-            c -= 1
             raise NotImplementedError("Open intervals not supported.")
-        end = self.model_vars[time_interval.upper.timepoint] + c
+        end = self.model_vars[time_interval.upper.timepoint]
 
         # if there are no fluents in the condition, a constraint should be added
         if not self._fnode_contains_fluents(fnode):
@@ -1074,19 +1124,27 @@ class CPSETimepoints(CPSEBaseEngine):
             for fluent in problem.fluents:
                 self.model_vars[fluent] = self.resources[fluent.name][i + 1]
 
-            constraint_var = self.add_constraint(fnode)
+            constraint_var = self.add_constraint(fnode, cache_enabled=False)
 
-            # TODO: tp_GE_start and tp_LE_end should be cached
-            tp_GE_start = self.new_bool_var()
-            tp_LE_end = self.new_bool_var()
-            self.model.add(self.timepoints[i] >= start).only_enforce_if(tp_GE_start)
-            self.model.add(self.timepoints[i] < start).only_enforce_if(
-                tp_GE_start.negated()
-            )
-            self.model.add(self.timepoints[i] <= end).only_enforce_if(tp_LE_end)
-            self.model.add(self.timepoints[i] > end).only_enforce_if(
-                tp_LE_end.negated()
-            )
+            tp_GE_start_key = f"{self.timepoints[i].name} >= {start.name}"
+            if tp_GE_start_key not in self._variables_cache:
+                tp_GE_start = self.new_bool_var()
+                self.model.add(self.timepoints[i] >= start).only_enforce_if(tp_GE_start)
+                self.model.add(self.timepoints[i] < start).only_enforce_if(
+                    tp_GE_start.negated()
+                )
+                self._variables_cache[tp_GE_start_key] = tp_GE_start
+            tp_GE_start = self._variables_cache[tp_GE_start_key]
+
+            tp_LE_end_key = f"{self.timepoints[i].name} <= {end.name}"
+            if tp_LE_end_key not in self._variables_cache:
+                tp_LE_end = self.new_bool_var()
+                self.model.add(self.timepoints[i] <= end).only_enforce_if(tp_LE_end)
+                self.model.add(self.timepoints[i] > end).only_enforce_if(
+                    tp_LE_end.negated()
+                )
+                self._variables_cache[tp_LE_end_key] = tp_LE_end
+            tp_LE_end = self._variables_cache[tp_LE_end_key]
 
             # if the next timepoint value is equal then the constraint should not be enforced
             # because fluent values should be taken from the last timepoint with that value
@@ -1096,14 +1154,23 @@ class CPSETimepoints(CPSEBaseEngine):
                     [tp_GE_start.negated(), tp_LE_end.negated(), constraint_var]
                 )
             else:
-                # TODO: next_timepoint_is_different should be cached
-                next_timepoint_is_different = self.new_bool_var()
-                self.model.add(
-                    self.timepoints[i + 1] != self.timepoints[i]
-                ).only_enforce_if(next_timepoint_is_different)
-                self.model.add(
-                    self.timepoints[i + 1] == self.timepoints[i]
-                ).only_enforce_if(next_timepoint_is_different.negated())
+                next_timepoint_is_different_key = (
+                    f"{self.timepoints[i + 1].name} != {self.timepoints[i].name}"
+                )
+                if next_timepoint_is_different_key not in self._variables_cache:
+                    next_timepoint_is_different = self.new_bool_var()
+                    self.model.add(
+                        self.timepoints[i + 1] != self.timepoints[i]
+                    ).only_enforce_if(next_timepoint_is_different)
+                    self.model.add(
+                        self.timepoints[i + 1] == self.timepoints[i]
+                    ).only_enforce_if(next_timepoint_is_different.negated())
+                    self._variables_cache[next_timepoint_is_different_key] = (
+                        next_timepoint_is_different
+                    )
+                next_timepoint_is_different = self._variables_cache[
+                    next_timepoint_is_different_key
+                ]
 
                 # (tp_GE_start and tp_LE_end) => constraint
                 self.model.add_bool_or(
