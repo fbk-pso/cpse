@@ -208,6 +208,15 @@ def test_activity_constraints(problem: SchedulingProblem):
     )
 
 
+def test_constraint_on_resource(problem: SchedulingProblem):
+    activity = problem.add_activity("activity", duration=1)
+    resource = problem.add_resource("resource", capacity=2)
+
+    problem.add_constraint(LE(resource, 2))
+
+    problem_solved_satisficing_or_optimally(problem)
+
+
 def test_condition_with_ClosedTimeInterval(problem: SchedulingProblem):
     activity = problem.add_activity("activity", duration=10)
     resource = problem.add_resource("resource", capacity=2)
@@ -432,25 +441,3 @@ def test_not_supported_quality_metrics(problem: SchedulingProblem):
     problem.add_activity("activity", duration=5)
     problem.add_quality_metric(MinimizeSequentialPlanLength())
     assert not CPSETimepoints().supports(problem.kind)
-
-
-def test_not_supported_fluent_exp(problem: SchedulingProblem):
-    resource = problem.add_resource("resource", 10)
-    problem.add_constraint(LT(1, resource))
-
-    with pytest.raises(NotImplementedError):
-        with OneshotPlanner(name="cpse-timepoints") as planner:
-            planner.solve(problem)
-
-
-def test_not_supported_codition_with_fluent_exp(problem: SchedulingProblem):
-    activity = problem.add_activity("activity", duration=5)
-    resource = problem.add_resource("resource", 10)
-    problem.add_constraint(LT(1, resource))
-    problem.add_condition(
-        ClosedTimeInterval(activity.start, activity.end), LT(1, resource)
-    )
-
-    with pytest.raises(NotImplementedError):
-        with OneshotPlanner(name="cpse-timepoints") as planner:
-            planner.solve(problem)
