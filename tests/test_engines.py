@@ -235,6 +235,35 @@ class CommonTests:
             == res.plan.get(activity2.start).constant_value()
         )
 
+    def test_problem_effects(self, problem: SchedulingProblem):
+        resource = problem.add_resource("resource", capacity=1)
+        activity = problem.add_activity("activity", duration=20)
+
+        problem.add_decrease_effect(activity.start, resource, 1)
+        problem.add_increase_effect(10, resource, 1)
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert res.plan.get(activity.start).constant_value() <= 10
+
+    def test_activity_effects(self, problem: SchedulingProblem):
+        resource = problem.add_resource("resource", capacity=4)
+        problem.set_initial_value(resource, 0)
+
+        activity1 = problem.add_activity("activity1", duration=4)
+        activity2 = problem.add_activity("activity2", duration=4)
+        activity3 = problem.add_activity("activity3", duration=4)
+
+        problem.add_increase_effect(10, resource, 2)
+        activity1.add_decrease_effect(activity1.start, resource, 2)
+
+        problem.add_increase_effect(20, resource, 3)
+        activity2.add_decrease_effect(activity2.start, resource, 3)
+
+        problem.add_increase_effect(30, resource, 4)
+        activity3.add_decrease_effect(activity3.start, resource, 4)
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
     def test_multiple_effects_at_the_same_timepoint(self, problem: SchedulingProblem):
         resource = problem.add_resource("resource", capacity=2)
         activity = problem.add_activity("activity", duration=20)
@@ -243,96 +272,6 @@ class CommonTests:
         problem.add_increase_effect(activity.start, resource, 1)
 
         self.problem_solved_satisficing_or_optimally(problem)
-
-    def test_minimize_makespan(self, problem: SchedulingProblem):
-        resource = problem.add_resource("resource", capacity=1)
-        duration = 10
-        num_activities = 5
-        activities = []
-        for i in range(num_activities):
-            activity = problem.add_activity(f"activity{i}", duration=duration)
-            activity.uses(resource, 1)
-            activities.append(activity)
-
-        problem.add_quality_metric(MinimizeMakespan())
-
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        for activity in activities:
-            assert res.plan.get(activity.end).constant_value() <= (
-                num_activities * duration
-            )
-
-    def test_simple_problem(self, problem: SchedulingProblem):
-        machine = problem.add_resource("machine", capacity=1)
-
-        # Define activities with specific durations
-        activity1 = problem.add_activity("activity1", duration=5)
-        activity2 = problem.add_activity("activity2", duration=10)
-        activity3 = problem.add_activity("activity3", duration=4)
-
-        activity2.set_duration_bounds(5, 15)
-
-        # Each activity requires the machine resource
-        activity2.uses(machine, 1)
-        activity3.uses(machine, 1)
-
-        # activity1.uses(machine, 1)
-        problem.add_decrease_effect(activity1.start, machine, 1)
-        problem.add_increase_effect(activity1.end, machine, 1)
-
-        problem.add_constraint(Equals(activity2.end, activity3.start))
-
-        activity1_before_activity2 = problem.add_variable(
-            "activity1_before_activity2", get_environment().type_manager.BoolType()
-        )
-        activity2_before_activity3 = problem.add_variable(
-            "activity2_before_activity3", get_environment().type_manager.BoolType()
-        )
-        problem.add_constraint(
-            Iff(LE(activity1.end, activity2.start), activity1_before_activity2)
-        )
-        problem.add_constraint(
-            Iff(LE(activity2.end, activity3.start), activity2_before_activity3)
-        )
-
-        # minimizing makespan, activity1 should be the first activity
-        problem.add_quality_metric(MinimizeMakespan())
-
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity1_before_activity2).constant_value()
-        assert res.plan.get(activity2_before_activity3).constant_value()
-        assert res.plan.get(activity3.end).constant_value() == 19
-        assert not are_activities_overlapped(
-            res.plan, [activity1, activity2, activity3]
-        )
-
-    def test_not_supported_parameter_type(self, problem: SchedulingProblem):
-        activity = problem.add_activity("activity", duration=5)
-        problem.add_variable("param1", get_environment().type_manager.RealType())
-        activity.add_parameter("param2", get_environment().type_manager.RealType())
-        assert not self.engine_class().supports(problem.kind)
-
-    def test_not_supported_parameters_in_duration(self, problem: SchedulingProblem):
-        activity = problem.add_activity("activity", duration=5)
-        int_var = problem.add_variable(
-            "int_var", get_environment().type_manager.IntType()
-        )
-        activity.set_fixed_duration(int_var)
-
-        self.problem_unsupported(problem)
-
-    def test_not_supported_quality_metrics(self, problem: SchedulingProblem):
-        problem.add_activity("activity", duration=5)
-        problem.add_quality_metric(MinimizeSequentialPlanLength())
-        assert not self.engine_class().supports(problem.kind)
-
-
-class TestCPSE(CommonTests):
-    def engine_name(self):
-        return "cpse"
-
-    def engine_class(self):
-        return CPSE
 
     def test_problem_conditions(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=10)
@@ -428,34 +367,95 @@ class TestCPSE(CommonTests):
         assert 5 <= res.plan.get(int_var).constant_value() <= 10
         assert res.plan.get(bool_var).constant_value()
 
-    def test_problem_effects(self, problem: SchedulingProblem):
+    def test_minimize_makespan(self, problem: SchedulingProblem):
         resource = problem.add_resource("resource", capacity=1)
-        activity = problem.add_activity("activity", duration=20)
+        duration = 10
+        num_activities = 5
+        activities = []
+        for i in range(num_activities):
+            activity = problem.add_activity(f"activity{i}", duration=duration)
+            activity.uses(resource, 1)
+            activities.append(activity)
 
-        problem.add_decrease_effect(activity.start, resource, 1)
-        problem.add_increase_effect(10, resource, 1)
+        problem.add_quality_metric(MinimizeMakespan())
 
         res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity.start).constant_value() <= 10
+        for activity in activities:
+            assert res.plan.get(activity.end).constant_value() <= (
+                num_activities * duration
+            )
 
-    def test_activity_effects(self, problem: SchedulingProblem):
-        resource = problem.add_resource("resource", capacity=4)
-        problem.set_initial_value(resource, 0)
+    def test_simple_problem(self, problem: SchedulingProblem):
+        machine = problem.add_resource("machine", capacity=1)
 
-        activity1 = problem.add_activity("activity1", duration=4)
-        activity2 = problem.add_activity("activity2", duration=4)
+        # Define activities with specific durations
+        activity1 = problem.add_activity("activity1", duration=5)
+        activity2 = problem.add_activity("activity2", duration=10)
         activity3 = problem.add_activity("activity3", duration=4)
 
-        problem.add_increase_effect(10, resource, 2)
-        activity1.add_decrease_effect(activity1.start, resource, 2)
+        activity2.set_duration_bounds(5, 15)
 
-        problem.add_increase_effect(20, resource, 3)
-        activity2.add_decrease_effect(activity2.start, resource, 3)
+        # Each activity requires the machine resource
+        activity2.uses(machine, 1)
+        activity3.uses(machine, 1)
 
-        problem.add_increase_effect(30, resource, 4)
-        activity3.add_decrease_effect(activity3.start, resource, 4)
+        # activity1.uses(machine, 1)
+        problem.add_decrease_effect(activity1.start, machine, 1)
+        problem.add_increase_effect(activity1.end, machine, 1)
 
-        self.problem_solved_satisficing_or_optimally(problem)
+        problem.add_constraint(Equals(activity2.end, activity3.start))
+
+        activity1_before_activity2 = problem.add_variable(
+            "activity1_before_activity2", get_environment().type_manager.BoolType()
+        )
+        activity2_before_activity3 = problem.add_variable(
+            "activity2_before_activity3", get_environment().type_manager.BoolType()
+        )
+        problem.add_constraint(
+            Iff(LE(activity1.end, activity2.start), activity1_before_activity2)
+        )
+        problem.add_constraint(
+            Iff(LE(activity2.end, activity3.start), activity2_before_activity3)
+        )
+
+        # minimizing makespan, activity1 should be the first activity
+        problem.add_quality_metric(MinimizeMakespan())
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert res.plan.get(activity1_before_activity2).constant_value()
+        assert res.plan.get(activity2_before_activity3).constant_value()
+        assert res.plan.get(activity3.end).constant_value() == 19
+        assert not are_activities_overlapped(
+            res.plan, [activity1, activity2, activity3]
+        )
+
+    def test_not_supported_parameter_type(self, problem: SchedulingProblem):
+        activity = problem.add_activity("activity", duration=5)
+        problem.add_variable("param1", get_environment().type_manager.RealType())
+        activity.add_parameter("param2", get_environment().type_manager.RealType())
+        assert not self.engine_class().supports(problem.kind)
+
+    def test_not_supported_parameters_in_duration(self, problem: SchedulingProblem):
+        activity = problem.add_activity("activity", duration=5)
+        int_var = problem.add_variable(
+            "int_var", get_environment().type_manager.IntType()
+        )
+        activity.set_fixed_duration(int_var)
+
+        self.problem_unsupported(problem)
+
+    def test_not_supported_quality_metrics(self, problem: SchedulingProblem):
+        problem.add_activity("activity", duration=5)
+        problem.add_quality_metric(MinimizeSequentialPlanLength())
+        assert not self.engine_class().supports(problem.kind)
+
+
+class TestCPSE(CommonTests):
+    def engine_name(self):
+        return "cpse"
+
+    def engine_class(self):
+        return CPSE
 
     def test_conditional_effects(self, problem: SchedulingProblem):
         resource = problem.add_resource("resource", capacity=2)
@@ -626,44 +626,3 @@ class TestCPSETimepoints(CommonTests):
 
         res = self.problem_solved_satisficing_or_optimally(problem)
         assert res.plan.get(int_var).constant_value() == 4
-
-    def test_problem_effects(self, problem: SchedulingProblem):
-        resource = problem.add_resource("resource", capacity=2)
-        activity1 = problem.add_activity("activity1", duration=20)
-        activity2 = problem.add_activity("activity2", duration=10)
-
-        problem.add_decrease_effect(activity1.start, resource, 2)
-        problem.add_increase_effect(activity1.end, resource, 1)
-        problem.add_decrease_effect(activity2.start, resource, 1)
-        problem.add_effect(activity2.end, resource, 1)
-
-        # should be activity1.start <= activity1.end
-        problem.add_constraint(LE(activity2.end, activity1.start))
-        self.problem_unsolvable(problem)
-
-    def test_activity_effects(self, problem: SchedulingProblem):
-        resource = problem.add_resource("resource", capacity=4)
-        problem.set_initial_value(resource, 0)
-
-        activity1 = problem.add_activity("activity1", duration=4)
-        activity2 = problem.add_activity("activity2", duration=5)
-        activity3 = problem.add_activity("activity3", duration=6)
-
-        activity1.add_effect(activity1.end, resource, 2)
-
-        activity2.add_decrease_effect(activity2.start, resource, 2)
-        problem.add_increase_effect(activity2.end, resource, 4)
-
-        activity3.add_decrease_effect(activity3.start, resource, 4)
-
-        # should be activity1.end <= activity2.start <= activity2.end <= activity3.start
-        problem.add_constraint(
-            Not(
-                And(
-                    LE(activity1.end, activity2.start),
-                    LE(activity2.end, activity3.start),
-                )
-            )
-        )
-
-        self.problem_unsolvable(problem)
