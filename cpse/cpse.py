@@ -5,6 +5,7 @@ from abc import abstractmethod
 import collections
 import operator
 import warnings
+import traceback
 
 import unified_planning as up
 from unified_planning.engines import (
@@ -130,13 +131,10 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     @staticmethod
     def supported_kind() -> ProblemKind:
-        # TODO: cpse supports conditional effects
         supported_kind = ProblemKind()
         supported_kind.set_problem_class("SCHEDULING")
         supported_kind.set_problem_type("SIMPLE_NUMERIC_PLANNING")
         supported_kind.set_time("DISCRETE_TIME")
-        supported_kind.set_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
-        supported_kind.set_time("EXTERNAL_CONDITIONS_AND_EFFECTS")
         supported_kind.set_time("TIMED_EFFECTS")
         supported_kind.set_time("TIMED_GOALS")
         supported_kind.set_time("DURATION_INEQUALITIES")
@@ -147,16 +145,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         supported_kind.set_conditions_kind("EQUALITIES")
         supported_kind.set_effects_kind("INCREASE_EFFECTS")
         supported_kind.set_effects_kind("DECREASE_EFFECTS")
-        supported_kind.set_typing("FLAT_TYPING")
         supported_kind.set_parameters("BOOL_ACTION_PARAMETERS")
+        supported_kind.set_parameters("BOUNDED_INT_ACTION_PARAMETERS")
         supported_kind.set_parameters("UNBOUNDED_INT_ACTION_PARAMETERS")
         supported_kind.set_fluents_type("INT_FLUENTS")
         supported_kind.set_quality_metrics("MAKESPAN")
         return supported_kind
-
-    @staticmethod
-    def supports(problem_kind: ProblemKind) -> bool:
-        return problem_kind <= CPSE.supported_kind()
 
     def new_bool_var(self) -> cp_model.IntVar:
         """
@@ -209,9 +203,17 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             if param.type.is_bool_type():
                 var = self.model.new_bool_var(param.name)
             elif param.type.is_int_type():
-                var = self.model.new_int_var(
-                    self.lower_bound, self.upper_bound, param.name
+                lb = (
+                    self.lower_bound
+                    if param.type.lower_bound is None
+                    else param.type.lower_bound
                 )
+                ub = (
+                    self.upper_bound
+                    if param.type.upper_bound is None
+                    else param.type.upper_bound
+                )
+                var = self.model.new_int_var(lb, ub, param.name)
             else:
                 raise NotImplementedError(f"Parameter type {param.type} not supported.")
 
@@ -227,15 +229,19 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         """
 
         # assume FixedDuration or ClosedDurationInterval
-        assert (
+        if not (
             activity.duration.lower.is_int_constant()
             and activity.duration.upper.is_int_constant()
             and not activity.duration.is_left_open()
             and not activity.duration.is_right_open()
-        )
+        ):
+            # TODO: support bounds defined using a parameter and STATIC_FLUENTS_IN_DURATION ?
+            raise NotImplementedError(
+                "Activity duration bounds must be closed and of integer type."
+            )
 
-        lower = activity.duration.lower.constant_value()
-        upper = activity.duration.upper.constant_value()
+        lower = activity.duration.lower.int_constant_value()
+        upper = activity.duration.upper.int_constant_value()
 
         if lower == upper:
             # FixedDuration
@@ -294,7 +300,6 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             # check if fnode cached
             if cache_enabled and not processed and repr(fnode) in self._variables_cache:
-                print("hit", repr(fnode))
                 results.append(self._variables_cache[repr(fnode)])
 
             elif fnode.is_parameter_exp():
@@ -480,6 +485,29 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             else:
                 raise NotImplementedError(f"Quality metric {metric} not supported.")
 
+    def check_if_supported_problem(self, problem: "up.model.AbstractProblem"):
+        """
+        Checks if the given problem is a supported instance of `SchedulingProblem`.
+        Raises `NotImplementedError` if unsupported.
+
+        Parameters:
+            problem (up.model.AbstractProblem): The problem instance to validate.
+
+        Raises:
+            NotImplementedError: If the problem is not supported.
+        """
+
+        if not isinstance(problem, SchedulingProblem):
+            raise NotImplementedError(f"Problem of type {type(problem)} not supported.")
+        problem: SchedulingProblem
+
+        if not problem.discrete_time:
+            raise NotImplementedError("Continuous time not supported.")
+        if len(problem.user_types) > 0:
+            raise NotImplementedError("User types not supported.")
+        if len(problem.all_objects) > 0:
+            raise NotImplementedError("Objects not supported.")
+
     def _solve(
         self,
         problem: "up.model.AbstractProblem",
@@ -487,112 +515,131 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         timeout: Optional[float] = None,
         output_stream: Optional[IO[str]] = None,
     ) -> "up.engines.results.PlanGenerationResult":
-        assert isinstance(
-            problem, SchedulingProblem
-        ), f"problem of type {type(problem)} not supported"
-        if heuristic is not None:
-            warnings.warn("CPSE does not support custom heuristics", UserWarning)
 
-        self.model.name = problem.name
+        try:
+            self.check_if_supported_problem(problem)
 
-        # map each fluent to its maximum capacity and initial value
-        for f in problem.fluents:
-            self.fluent_capacity[f.name] = problem.fluents_defaults[f].constant_value()
-            self.fluent_initial_value[f.name] = problem.fluents_defaults[
-                f
-            ].constant_value()
+            if heuristic is not None:
+                warnings.warn("CPSE does not support custom heuristics", UserWarning)
 
-        # override initial values when an explicit one is defined
-        for f in problem.explicit_initial_values:
-            self.fluent_initial_value[f.fluent().name] = (
-                problem.explicit_initial_values[f].constant_value()
+            self.model.name = problem.name
+
+            # map each fluent to its maximum capacity and initial value
+            for f in problem.fluents:
+                self.fluent_capacity[f.name] = problem.fluents_defaults[
+                    f
+                ].int_constant_value()
+                self.fluent_initial_value[f.name] = problem.fluents_defaults[
+                    f
+                ].int_constant_value()
+
+            # override initial values when an explicit one is defined
+            for f in problem.explicit_initial_values:
+                self.fluent_initial_value[f.fluent().name] = (
+                    problem.explicit_initial_values[f].int_constant_value()
+                )
+
+            # add the parameters of the problem to the model
+            self.add_parameters(problem.base_variables)
+            # add the parameters of the activities to the model
+            for up_activity in problem.activities:
+                self.add_parameters(up_activity.parameters)
+
+            # add the activities to the model
+            for up_activity in problem.activities:
+                self.add_activity(up_activity)
+
+            # define the makespan variable
+            makespan_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "makespan"
+            )
+            self.model.add_max_equality(
+                makespan_var, [a.end for a in self.activities.values()]
             )
 
-        # add the parameters of the problem to the model
-        self.add_parameters(problem.base_variables)
-        # add the parameters of the activities to the model
-        for up_activity in problem.activities:
-            self.add_parameters(up_activity.parameters)
+            # add global start and end to the model variables
+            self.model_vars[timing.GlobalStartTiming(delay=0).timepoint] = 0
+            self.model_vars[timing.GlobalEndTiming().timepoint] = makespan_var
 
-        # add the activities to the model
-        for up_activity in problem.activities:
-            self.add_activity(up_activity)
+            # add problem-specific and activity-related effects to the model
+            self.add_effects(problem)
+            # add problem-specific and activity-related constraints to the model
+            self.add_constraints(problem)
+            # add problem-specific and activity-related conditions to the model
+            self.add_conditions(problem)
 
-        # define the makespan variable
-        makespan_var = self.model.new_int_var(
-            self.lower_bound, self.upper_bound, "makespan"
-        )
-        self.model.add_max_equality(
-            makespan_var, [a.end for a in self.activities.values()]
-        )
+            # add quality metrics to the model
+            self.add_quality_metrics(problem, makespan_var)
 
-        # add global start and end to the model variables
-        self.model_vars[timing.GlobalStartTiming(delay=0).timepoint] = 0
-        self.model_vars[timing.GlobalEndTiming().timepoint] = makespan_var
+            # solve the modeled problem
+            solver = cp_model.CpSolver()
+            if timeout is not None:
+                solver.parameters.max_time_in_seconds = timeout
+            if output_stream is not None:
+                solver.parameters.log_search_progress = True
+                solver.log_callback = lambda s: output_stream.write(s + "\n")
+                solver.parameters.log_to_stdout = False
 
-        # add problem-specific and activity-related effects to the model
-        self.add_effects(problem)
-        # add problem-specific and activity-related constraints to the model
-        self.add_constraints(problem)
-        # add problem-specific and activity-related conditions to the model
-        self.add_conditions(problem)
+            status = solver.solve(self.model)
 
-        # add quality metrics to the model
-        self.add_quality_metrics(problem, makespan_var)
+            # define metrics to be returned with the result
+            metrics = {
+                "wall_time": str(solver.wall_time),
+                "user_time": str(solver.user_time),
+                "objective_value": str(solver.objective_value),
+                "best_objective_bound": str(solver.best_objective_bound),
+                "branches": str(solver.num_branches),
+                "conflicts": str(solver.num_conflicts),
+                "num_booleans": str(solver.num_booleans),
+            }
 
-        # solve the modeled problem
-        solver = cp_model.CpSolver()
-        if timeout is not None:
-            solver.parameters.max_time_in_seconds = timeout
-        if output_stream is not None:
-            solver.parameters.log_search_progress = True
-            solver.log_callback = lambda s: output_stream.write(s + "\n")
-            solver.parameters.log_to_stdout = False
+            if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
+                # map a decision variable to its solution value
+                assignment = {}
+                for up_var, cp_var in self.model_vars.items():
+                    assignment[up_var] = solver.value(cp_var)
+                    # map a boolean parameter to its boolean value rather than the
+                    # integer value returned by the solver
+                    if isinstance(up_var, Parameter) and up_var.type.is_bool_type():
+                        assert solver.value(cp_var) in [0, 1]
+                        assignment[up_var] = solver.value(cp_var) == 1
 
-        status = solver.solve(self.model)
+                plan = Schedule(problem.activities, assignment, problem.environment)
 
-        # define metrics to be returned with the result
-        metrics = {
-            "wall_time": str(solver.wall_time),
-            "user_time": str(solver.user_time),
-            "objective_value": str(solver.objective_value),
-            "best_objective_bound": str(solver.best_objective_bound),
-            "branches": str(solver.num_branches),
-            "conflicts": str(solver.num_conflicts),
-            "num_booleans": str(solver.num_booleans),
-        }
+                return PlanGenerationResult(
+                    (
+                        PlanGenerationResultStatus.SOLVED_OPTIMALLY
+                        if status == cp_model.OPTIMAL
+                        else PlanGenerationResultStatus.SOLVED_SATISFICING
+                    ),
+                    plan,
+                    engine_name=self.name,
+                    log_messages=None,
+                    metrics=metrics,
+                )
+            else:
+                return PlanGenerationResult(
+                    PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY,
+                    plan=None,
+                    engine_name=self.name,
+                    log_messages=None,
+                    metrics=metrics,
+                )
 
-        if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
-            # map a decision variable to its solution value
-            assignment = {}
-            for up_var, cp_var in self.model_vars.items():
-                assignment[up_var] = solver.value(cp_var)
-                # map a boolean parameter to its boolean value rather than the
-                # integer value returned by the solver
-                if isinstance(up_var, Parameter) and up_var.type.is_bool_type():
-                    assert solver.value(cp_var) in [0, 1]
-                    assignment[up_var] = solver.value(cp_var) == 1
-
-            plan = Schedule(problem.activities, assignment, problem.environment)
-
+        except NotImplementedError as e:
             return PlanGenerationResult(
-                (
-                    PlanGenerationResultStatus.SOLVED_OPTIMALLY
-                    if status == cp_model.OPTIMAL
-                    else PlanGenerationResultStatus.SOLVED_SATISFICING
-                ),
-                plan,
-                engine_name=self.name,
-                log_messages=None,
-                metrics=metrics,
-            )
-        else:
-            return PlanGenerationResult(
-                PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY,
+                PlanGenerationResultStatus.UNSUPPORTED_PROBLEM,
                 plan=None,
                 engine_name=self.name,
-                log_messages=None,
-                metrics=metrics,
+                log_messages=e,
+            )
+
+        except:
+            return PlanGenerationResult(
+                PlanGenerationResultStatus.INTERNAL_ERROR,
+                plan=None,
+                engine_name=self.name,
+                log_messages=traceback.format_exc(),
             )
 
 
@@ -610,6 +657,19 @@ class CPSE(CPSEBaseEngine):
     @property
     def name(self) -> str:
         return "CPSE"
+
+    @staticmethod
+    def supported_kind() -> ProblemKind:
+        supported_kind = CPSEBaseEngine.supported_kind()
+        supported_kind.set_problem_type("GENERAL_NUMERIC_PLANNING")
+        supported_kind.set_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
+        supported_kind.set_time("EXTERNAL_CONDITIONS_AND_EFFECTS")
+        supported_kind.set_effects_kind("CONDITIONAL_EFFECTS")
+        return supported_kind
+
+    @staticmethod
+    def supports(problem_kind: ProblemKind) -> bool:
+        return problem_kind <= CPSE.supported_kind()
 
     def add_constraints(self, problem: SchedulingProblem):
         """
@@ -658,7 +718,11 @@ class CPSE(CPSEBaseEngine):
         for timing, eff in activities_effects + problem.base_effects:
             eff: Effect
             fluent_name = eff.fluent.fluent().name
-            value = eff.value.constant_value()
+            if not eff.value.is_int_constant():
+                raise NotImplementedError(
+                    "Only constant integer effect values are supported."
+                )
+            value = eff.value.int_constant_value()
             if value == 0:  # if value is 0, the effect is ignored
                 continue
 
@@ -736,8 +800,6 @@ class CPSE(CPSEBaseEngine):
             )
             interval_var = self.model.new_interval_var(start, duration, end, name)
             self._variables_cache[interval_key] = interval_var
-        else:
-            print("hit", interval_key)
         interval_var = self._variables_cache[interval_key]
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
 
@@ -792,6 +854,10 @@ class CPSETimepoints(CPSEBaseEngine):
     @property
     def name(self) -> str:
         return "CPSETimepoints"
+
+    @staticmethod
+    def supports(problem_kind: ProblemKind) -> bool:
+        return problem_kind <= CPSEBaseEngine.supported_kind()
 
     def timepoints_setup(self, problem: SchedulingProblem):
         """
@@ -1019,7 +1085,7 @@ class CPSETimepoints(CPSEBaseEngine):
         for timing, eff in activities_effects + problem.base_effects:
             eff: Effect
             fluent_name = eff.fluent.fluent().name
-            value = eff.value.constant_value()
+            value = eff.value.int_constant_value()
             if eff.is_increase():
                 pass
             elif eff.is_decrease():
