@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unified Planning Integration for OR-Tools CP-SAT Model"""
-from typing import IO, Callable, Optional, List, Tuple, Union, Dict
+from typing import IO, Callable, Optional, List, Tuple, Union, Dict, Set, Iterable
 from abc import abstractmethod
 import collections
 import operator
@@ -135,6 +135,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         supported_kind.set_problem_class("SCHEDULING")
         supported_kind.set_problem_type("SIMPLE_NUMERIC_PLANNING")
         supported_kind.set_time("DISCRETE_TIME")
+        supported_kind.set_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
+        supported_kind.set_time("EXTERNAL_CONDITIONS_AND_EFFECTS")
         supported_kind.set_time("TIMED_EFFECTS")
         supported_kind.set_time("TIMED_GOALS")
         supported_kind.set_time("DURATION_INEQUALITIES")
@@ -662,8 +664,6 @@ class CPSE(CPSEBaseEngine):
     def supported_kind() -> ProblemKind:
         supported_kind = CPSEBaseEngine.supported_kind()
         supported_kind.set_problem_type("GENERAL_NUMERIC_PLANNING")
-        supported_kind.set_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
-        supported_kind.set_time("EXTERNAL_CONDITIONS_AND_EFFECTS")
         supported_kind.set_effects_kind("CONDITIONAL_EFFECTS")
         return supported_kind
 
@@ -773,25 +773,23 @@ class CPSE(CPSEBaseEngine):
 
         bool_var = self.add_constraint(fnode)
 
-        delay_start = 0
+        start_delay = 0
         if time_interval.lower.delay != 0:
-            assert isinstance(time_interval.lower.delay, int)
-            delay_start += time_interval.lower.delay
+            start_delay += time_interval.lower.delay
         if time_interval.is_left_open():
-            delay_start += 1
-        start = self.model_vars[time_interval.lower.timepoint] + delay_start
+            start_delay += 1
+        start = self.model_vars[time_interval.lower.timepoint] + start_delay
 
         # add 1 to end because `add_cumulative` enforces the constraint for t in [start, end),
         # but we want the constraint to be enforced also at the end
-        delay_end = 1
+        end_delay = 1
         if time_interval.upper.delay != 0:
-            assert isinstance(time_interval.upper.delay, int)
-            delay_end += time_interval.upper.delay
+            end_delay += time_interval.upper.delay
         if time_interval.is_right_open():
-            delay_end -= 1
-        end = self.model_vars[time_interval.upper.timepoint] + delay_end
+            end_delay -= 1
+        end = self.model_vars[time_interval.upper.timepoint] + end_delay
 
-        interval_key = f"interval [{time_interval.lower.timepoint} + {delay_start}, {time_interval.upper.timepoint} + {delay_end}]"
+        interval_key = f"interval [{time_interval.lower.timepoint} + {start_delay}, {time_interval.upper.timepoint} + {end_delay}]"
         if interval_key not in self._variables_cache:
             duration = self.model.new_int_var(
                 self.lower_bound,
@@ -835,11 +833,11 @@ class CPSETimepoints(CPSEBaseEngine):
 
     Attributes:
         timepoints (List[cp_model.IntVar]): An ordered list of timepoints in the model.
-        assignment_matrix (Dict[timing.Timepoint, List[cp_model.IntVar]]): A mapping from
-            each timepoint to a list of boolean assignment variables.
+        assignment_matrix (Dict[Tuple[timing.Timepoint, int], List[cp_model.IntVar]]):
+            A mapping from a timing to a list of boolean assignment variables.
             It represents a square binary matrix, where each row and column contains
             exactly one entry of `1` with all other entries being `0`, indicating the
-            assignment of each timepoint to a unique activity timepoint.
+            assignment of each timepoint to a unique problem timing.
         resources (Dict[str, List[cp_model.IntVar]]): A dictionary tracking resource value
             at each timepoint.
     """
@@ -848,7 +846,9 @@ class CPSETimepoints(CPSEBaseEngine):
         super().__init__(**kwargs)
 
         self.timepoints: List[cp_model.IntVar] = []
-        self.assignment_matrix: Dict[timing.Timepoint, List[cp_model.IntVar]] = {}
+        self.assignment_matrix: Dict[
+            Tuple[timing.Timepoint, int], List[cp_model.IntVar]
+        ] = {}
         self.resources: Dict[str, List[cp_model.IntVar]] = {}
 
     @property
@@ -859,6 +859,48 @@ class CPSETimepoints(CPSEBaseEngine):
     def supports(problem_kind: ProblemKind) -> bool:
         return problem_kind <= CPSEBaseEngine.supported_kind()
 
+    def _fnode_timings(self, fnode: FNode) -> Iterable["timing.Timing"]:
+        stack = [fnode]
+        while len(stack) > 0:
+            fnode = stack.pop()
+            if fnode.is_timing_exp():
+                yield fnode.timing()
+
+            if len(fnode.args) > 0:
+                for arg in fnode.args:
+                    stack.append(arg)
+
+    def _collect_all_problem_timings(
+        self, problem: SchedulingProblem
+    ) -> List[Tuple["timing.Timepoint", int]]:
+        problem_timings: Set[Tuple["timing.Timepoint", int]] = set()
+
+        for activity in problem.activities:
+            problem_timings.add((activity.start, 0))
+            problem_timings.add((activity.end, 0))
+
+        for fnode, activity in problem.all_constraints():
+            for timing in self._fnode_timings(fnode):
+                problem_timings.add((timing.timepoint, timing.delay))
+
+        for time_interval, fnode, activity in problem.all_conditions():
+            problem_timings.add(
+                (time_interval.lower.timepoint, time_interval.lower.delay)
+            )
+            problem_timings.add(
+                (time_interval.upper.timepoint, time_interval.upper.delay)
+            )
+            for timing in self._fnode_timings(fnode):
+                problem_timings.add((timing.timepoint, timing.delay))
+
+        for timing, effect, activity in problem.all_effects():
+            problem_timings.add((timing.timepoint, timing.delay))
+            if effect.is_conditional():
+                for timing in self._fnode_timings(effect.condition):
+                    problem_timings.add((timing.timepoint, timing.delay))
+
+        return list(problem_timings)
+
     def timepoints_setup(self, problem: SchedulingProblem):
         """
         Defines the constraints that links each activity timepoint (start or end)
@@ -868,32 +910,32 @@ class CPSETimepoints(CPSEBaseEngine):
             problem (SchedulingProblem): The scheduling problem.
         """
 
+        # TODO: try to use add_map_domain()
+
+        problem_timings = self._collect_all_problem_timings(problem)
         self.timepoints = [
             self.model.new_int_var(self.lower_bound, self.upper_bound, f"timepoint{i}")
-            for i in range(len(problem.activities) * 2)
+            for i in range(len(problem_timings))
         ]
         for i in range(len(self.timepoints) - 1):
             self.model.add(self.timepoints[i] <= self.timepoints[i + 1])
 
-        activity_timepoints: List[Tuple[timing.Timepoint, cp_model.IntVar]] = []
-        for activity_name in sorted(self.activities.keys()):
-            activity = self.activities[activity_name]
-            activity_timepoints.append((activity.up_activity.start, activity.start))
-            activity_timepoints.append((activity.up_activity.end, activity.end))
         self.assignment_matrix = {}
-        for i in range(len(activity_timepoints)):
-            up_tp_i, activity_timepoint_i = activity_timepoints[i]
-            # TODO: try to use add_map_domain()
-            self.assignment_matrix[up_tp_i] = []
+        for i in range(len(problem_timings)):
+            timing = problem_timings[i]
+            timepoint_var = self.model_vars[timing[0]]
+            self.assignment_matrix[timing] = []
             for tp in self.timepoints:
-                bool_var = self.model.new_bool_var(f"{activity_timepoint_i}@{tp}")
-                self.assignment_matrix[up_tp_i].append(bool_var)
-                self.model.add(tp == activity_timepoint_i).only_enforce_if(bool_var)
+                bool_var = self.model.new_bool_var(f"{timing}@{tp}")
+                self.assignment_matrix[timing].append(bool_var)
+                self.model.add(tp == (timepoint_var + timing[1])).only_enforce_if(
+                    bool_var
+                )
 
-            # each activity timepoint is assigned to exactly one timepoint
-            self.model.add_exactly_one(self.assignment_matrix[up_tp_i])
+            # each problem timing is assigned to exactly one timepoint
+            self.model.add_exactly_one(self.assignment_matrix[timing])
 
-        # each timepoint is assigned to exactly one activity timepoint
+        # each timepoint is assigned to exactly one problem timing
         for i in range(len(self.timepoints)):
             self.model.add_exactly_one(
                 bool_vars[i] for bool_vars in self.assignment_matrix.values()
@@ -1038,12 +1080,9 @@ class CPSETimepoints(CPSEBaseEngine):
         """
 
         fluent_name = effect.fluent.fluent().name
-        if timing.delay != 0:
-            raise NotImplementedError("Timing delay not supported.")
-
-        # TODO: support global timings and delays
-
-        for i, bool_var in enumerate(self.assignment_matrix[timing.timepoint]):
+        for i, bool_var in enumerate(
+            self.assignment_matrix[(timing.timepoint, timing.delay)]
+        ):
             if effect.is_assignment():
                 self.model.add(
                     self.resources[fluent_name][i + 1] == value
@@ -1115,7 +1154,9 @@ class CPSETimepoints(CPSEBaseEngine):
             for i, tp in enumerate(self.timepoints):
                 assignment_vars = list(
                     map(
-                        lambda t_eff: self.assignment_matrix[t_eff[0].timepoint][i],
+                        lambda t_eff: self.assignment_matrix[
+                            (t_eff[0].timepoint, t_eff[0].delay)
+                        ][i],
                         fluent_effects,
                     )
                 )
@@ -1163,18 +1204,19 @@ class CPSETimepoints(CPSEBaseEngine):
             name (str): The name of the condition for identification within the model.
         """
 
-        # TODO: support open intervals and delay
+        start_delay = 0
         if time_interval.lower.delay != 0:
-            raise NotImplementedError("Timing delay not supported.")
+            start_delay += time_interval.lower.delay
         if time_interval.is_left_open():
-            raise NotImplementedError("Open intervals not supported.")
-        start = self.model_vars[time_interval.lower.timepoint]
+            start_delay += 1
+        start = self.model_vars[time_interval.lower.timepoint] + start_delay
 
+        end_delay = 0
         if time_interval.upper.delay != 0:
-            raise NotImplementedError("Timing delay not supported.")
+            end_delay += time_interval.upper.delay
         if time_interval.is_right_open():
-            raise NotImplementedError("Open intervals not supported.")
-        end = self.model_vars[time_interval.upper.timepoint]
+            end_delay -= 1
+        end = self.model_vars[time_interval.upper.timepoint] + end_delay
 
         # if there are no fluents in the condition, a constraint should be added
         if not self._fnode_contains_fluents(fnode):
@@ -1242,8 +1284,6 @@ class CPSETimepoints(CPSEBaseEngine):
                 self.model.add_bool_or(
                     [tp_GE_start.negated(), tp_LE_end.negated(), constraint_var]
                 ).only_enforce_if(next_timepoint_is_different)
-
-            # self.timepoints[i+1] == self.timepoints[i]
 
     def add_conditions(self, problem: SchedulingProblem):
         """
