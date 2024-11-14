@@ -26,6 +26,7 @@ from unified_planning.model import (
 from unified_planning.model.scheduling import SchedulingProblem, Activity
 from unified_planning.model.metrics import MinimizeMakespan
 from unified_planning.plans import Schedule
+from unified_planning.shortcuts import Equals, Iff, Plus, Minus
 
 from ortools.sat.python import cp_model
 
@@ -89,13 +90,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         lower_bound (int): The minimum bound for variables in the model, defaulting to 0.
         upper_bound (int): The maximum bound for variables in the model, defaulting to INT32_MAX.
         model (cp_model.CpModel): The underlying constraint programming model.
-        activities (Dict[str, activity_type]): A dictionary of activities keyed by name.
         model_vars (Dict[Union[timing.Timepoint, Parameter, Fluent], cp_model.IntVar]): A mapping
             of timepoints, parameters and fluents to the corresponding integer variables in the model.
-        fluent_capacity (Dict[str, int]): A dictionary defining the maximum capacity for each fluent.
-        fluent_initial_value (Dict[str, int]): A dictionary defining the initial value for each fluent.
-        bool_var_counter (int): A counter for generating anonymous boolean variables.
-        int_var_counter (int): A counter for generating anonymous integer variables.
     """
 
     def __init__(self, **kwargs):
@@ -106,15 +102,18 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self.upper_bound: int = kwargs.get("upper_bound", cp_model.INT32_MAX)
         self.model = cp_model.CpModel()
 
-        self.activities: Dict[str, activity_type] = {}
+        # dictionary of activities keyed by name
+        self._activities: Dict[str, activity_type] = {}
+        # mapping timepoints, parameters and fluents to the corresponding integer variables in the model
         self.model_vars: Dict[
             Union[timing.Timepoint, Parameter, Fluent], cp_model.IntVar
         ] = {}
-        self.fluent_capacity: Dict[str, int] = {}
-        self.fluent_initial_value: Dict[str, int] = {}
+        # mapping fluent to its lower bound, upper bound and initial value
+        self._fluents: Dict[str, List[int]] = {}
 
-        self.bool_var_counter: int = -1
-        self.int_var_counter: int = -1
+        # counters for generating anonymous variables
+        self._bool_var_counter: int = -1
+        self._int_var_counter: int = -1
 
         # cache model variables accessed multiple times
         self._variables_cache: Dict[
@@ -134,6 +133,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         supported_kind = ProblemKind()
         supported_kind.set_problem_class("SCHEDULING")
         supported_kind.set_problem_type("SIMPLE_NUMERIC_PLANNING")
+        supported_kind.set_problem_type("GENERAL_NUMERIC_PLANNING")
         supported_kind.set_time("DISCRETE_TIME")
         supported_kind.set_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
         supported_kind.set_time("EXTERNAL_CONDITIONS_AND_EFFECTS")
@@ -162,8 +162,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             cp_model.IntVar: A new integer variable bounded in [0,1].
         """
 
-        self.bool_var_counter += 1
-        return self.model.new_bool_var(f"bool{self.bool_var_counter}")
+        self._bool_var_counter += 1
+        return self.model.new_bool_var(f"bool{self._bool_var_counter}")
 
     def new_int_var(self) -> cp_model.IntVar:
         """
@@ -173,9 +173,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             cp_model.IntVar: A new integer variable.
         """
 
-        self.int_var_counter += 1
+        self._int_var_counter += 1
         return self.model.new_int_var(
-            self.lower_bound, self.upper_bound, f"int{self.int_var_counter}"
+            self.lower_bound, self.upper_bound, f"int{self._int_var_counter}"
         )
 
     def _convert_timing_to_linear_expr(self, t: timing.Timing) -> cp_model.LinearExprT:
@@ -193,15 +193,77 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         assert isinstance(t.delay, int)
         return cp_model.LinearExpr.sum([self.model_vars[t.timepoint], t.delay])
 
-    def add_parameters(self, parameters: List[Parameter]):
+    def _get_lower_upper_bounds(self, fluent: Fluent) -> Tuple[int, int]:
+        """
+        Determines the lower and upper bounds for a given fluent based on its type.
+
+        Args:
+            fluent (Fluent): The fluent for which bounds are to be determined. Must have
+                a type that is either integer or boolean.
+
+        Returns:
+            Tuple[int, int]: A tuple containing the lower and upper bounds for the fluent.
+
+        Raises:
+            NotImplementedError: If the fluent's type is not integer or boolean.
+        """
+
+        if fluent.type.is_int_type():
+            lower_bound = fluent.type.lower_bound
+            if fluent.type.lower_bound is None:
+                lower_bound = self.lower_bound
+
+            upper_bound = fluent.type.upper_bound
+            if fluent.type.upper_bound is None:
+                upper_bound = self.upper_bound
+
+        elif fluent.type.is_bool_type():
+            lower_bound = 0
+            upper_bound = 1
+
+        else:
+            raise NotImplementedError("Only integer and boolean fluents are supported.")
+
+        return lower_bound, upper_bound
+
+    def process_fluents(self, problem: SchedulingProblem):
+        """
+        Maps each fluent to its lower bound, upper bound and initial value.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing the fluents.
+        """
+
+        for fnode, initial_value in problem.initial_values.items():
+            assert fnode.is_fluent_exp()
+            fluent = fnode.fluent()
+            lower_bound, upper_bound = self._get_lower_upper_bounds(fluent)
+            if initial_value.is_int_constant():
+                assert lower_bound <= initial_value.int_constant_value() <= upper_bound
+            self._fluents[fluent.name] = [lower_bound, upper_bound, initial_value]
+
+        # TODO: can a fluent be uninitialized?
+        for fluent in problem.fluents:
+            if fluent.name in self._fluents:
+                continue
+
+            lower_bound, upper_bound = self._get_lower_upper_bounds(fluent)
+            self._fluents[fluent.name] = [lower_bound, upper_bound, None]
+
+    def add_parameters(self, problem: SchedulingProblem):
         """
         Adds the parameters to the model as boolean or integer variables.
 
         Args:
-            parameters (List[Parameter]): A list of parameters to be added to the model.
+            problem (SchedulingProblem): The scheduling problem containing the
+                parameters to be added to the model.
         """
 
-        for param in parameters:
+        activity_parameters = []
+        for activity in problem.activities:
+            activity_parameters += activity.parameters
+
+        for param in problem.base_variables + activity_parameters:
             if param.type.is_bool_type():
                 var = self.model.new_bool_var(param.name)
             elif param.type.is_int_type():
@@ -263,7 +325,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         interval_var = self.model.new_interval_var(
             start_var, duration, end_var, activity.name
         )
-        self.activities[activity.name] = activity_type(
+        self._activities[activity.name] = activity_type(
             start=start_var, end=end_var, interval=interval_var, up_activity=activity
         )
         self.model_vars[activity.start] = start_var
@@ -425,9 +487,10 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
 
         assert len(results) == 1
-        assert isinstance(results[0], cp_model.IntVar) or isinstance(
-            results[0], cp_model._NotBooleanVariable
-        )
+        # TODO: define an appropriate method that returns a value expression
+        # assert isinstance(results[0], cp_model.IntVar) or isinstance(
+        #     results[0], cp_model._NotBooleanVariable
+        # )
         return results[0]
 
     @abstractmethod
@@ -526,37 +589,20 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             self.model.name = problem.name
 
-            # map each fluent to its maximum capacity and initial value
-            for f in problem.fluents:
-                self.fluent_capacity[f.name] = problem.fluents_defaults[
-                    f
-                ].int_constant_value()
-                self.fluent_initial_value[f.name] = problem.fluents_defaults[
-                    f
-                ].int_constant_value()
-
-            # override initial values when an explicit one is defined
-            for f in problem.explicit_initial_values:
-                self.fluent_initial_value[f.fluent().name] = (
-                    problem.explicit_initial_values[f].int_constant_value()
-                )
-
-            # add the parameters of the problem to the model
-            self.add_parameters(problem.base_variables)
-            # add the parameters of the activities to the model
-            for up_activity in problem.activities:
-                self.add_parameters(up_activity.parameters)
+            self.process_fluents(problem)
+            # add problem-specific and activity-related parameters to the model
+            self.add_parameters(problem)
 
             # add the activities to the model
-            for up_activity in problem.activities:
-                self.add_activity(up_activity)
+            for activity in problem.activities:
+                self.add_activity(activity)
 
             # define the makespan variable
             makespan_var = self.model.new_int_var(
                 self.lower_bound, self.upper_bound, "makespan"
             )
             self.model.add_max_equality(
-                makespan_var, [a.end for a in self.activities.values()]
+                makespan_var, [a.end for a in self._activities.values()]
             )
 
             # add global start and end to the model variables
@@ -663,7 +709,6 @@ class CPSE(CPSEBaseEngine):
     @staticmethod
     def supported_kind() -> ProblemKind:
         supported_kind = CPSEBaseEngine.supported_kind()
-        supported_kind.set_problem_type("GENERAL_NUMERIC_PLANNING")
         supported_kind.set_effects_kind("CONDITIONAL_EFFECTS")
         return supported_kind
 
@@ -718,11 +763,15 @@ class CPSE(CPSEBaseEngine):
         for timing, eff in activities_effects + problem.base_effects:
             eff: Effect
             fluent_name = eff.fluent.fluent().name
-            if not eff.value.is_int_constant():
+
+            if eff.value.is_int_constant():
+                value = eff.value.int_constant_value()
+            elif eff.value.is_bool_constant():
+                value = 1 if eff.value.bool_constant_value() else 0
+            else:
                 raise NotImplementedError(
-                    "Only constant integer effect values are supported."
+                    "Effect values must be constants of type boolean or integer."
                 )
-            value = eff.value.int_constant_value()
             if value == 0:  # if value is 0, the effect is ignored
                 continue
 
@@ -743,16 +792,39 @@ class CPSE(CPSEBaseEngine):
                 fluent_effects[fluent_name].append((timing, value, True))
 
         for fluent_name in fluent_effects:
+            lb, ub, init_value = self._fluents[fluent_name]
+            if init_value is None:
+                raise NotImplementedError(
+                    f"The fluent '{fluent_name}' must be initialized with a constant value of type integer or boolean."
+                )
+            elif init_value.is_int_constant():
+                init_value = init_value.int_constant_value()
+            elif init_value.is_bool_constant():
+                if init_value.bool_constant_value() == False:
+                    init_value = 0
+                else:
+                    init_value = 1
+            else:
+                raise NotImplementedError(
+                    "Only integer and boolean constants are supported as initial values for fluents."
+                )
+
             times = [0]
-            values = [self.fluent_initial_value[fluent_name]]
+            values = [init_value]
             actives = [True]
             for timing, value, active in fluent_effects[fluent_name]:
                 times.append(self._convert_timing_to_linear_expr(timing))
                 values.append(value)
                 actives.append(active)
 
+            if lb > 0:
+                # TODO: add support for lb > 0
+                raise NotImplementedError(
+                    "Fluent lower bound cannot be greater than 0."
+                )
+
             self.model.add_reservoir_constraint_with_active(
-                times, values, actives, 0, self.fluent_capacity[fluent_name]
+                times, values, actives, lb, ub
             )
 
     def add_condition(
@@ -944,15 +1016,37 @@ class CPSETimepoints(CPSEBaseEngine):
         # (num resources) x (num timepoints + 1)
         self.resources = {}
         for fluent in problem.fluents:
-            init_value = self.model.new_constant(self.fluent_initial_value[fluent.name])
-            self.resources[fluent.name] = [init_value]
+            lb, ub, init_value = self._fluents[fluent.name]
+            init_value_var = self.model.new_int_var(lb, ub, f"{fluent}_init_value")
+            self.resources[fluent.name] = [init_value_var]
             for i in range(len(self.timepoints)):
                 resource_var = self.model.new_int_var(
-                    0,
-                    self.fluent_capacity[fluent.name],
-                    f"{fluent.name}@{self.timepoints[i]}",
+                    lb, ub, f"{fluent.name}@{self.timepoints[i]}"
                 )
                 self.resources[fluent.name].append(resource_var)
+
+        for fluent in problem.fluents:
+            self.model_vars[fluent] = self.resources[fluent.name][0]
+
+        for fluent in problem.fluents:
+            lb, ub, init_value = self._fluents[fluent.name]
+            if init_value is None:
+                # uninitialized fluent
+                continue
+            init_value_var = self.resources[fluent.name][0]
+
+            if fluent.type.is_bool_type():
+                constraint_var = self.add_constraint(
+                    Iff(fluent, init_value), cache_enabled=False
+                )
+            elif fluent.type.is_int_type():
+                constraint_var = self.add_constraint(
+                    Equals(fluent, init_value), cache_enabled=False
+                )
+            else:
+                raise NotImplementedError
+
+            self.model.add_bool_and(constraint_var)
 
     def add_constraints(self, problem: SchedulingProblem):
         """
@@ -1027,32 +1121,9 @@ class CPSETimepoints(CPSEBaseEngine):
             assign_effects = list(
                 filter(lambda t_eff: t_eff[1].is_assignment(), fluent_effects)
             )
-            increase_decrease_effects = list(
-                filter(lambda t_eff: not t_eff[1].is_assignment(), fluent_effects)
-            )
-
-            activity_timepoints = list(
-                set(  # remove duplicates
-                    map(
-                        lambda t_eff: self.model_vars[t_eff[0].timepoint],
-                        assign_effects,
-                    )
-                )
-            )
-
-            # TODO: use pairwise inequalities ?
-            self.model.add_all_different(activity_timepoints)
-
-            # add timepoints to visited_timepoints
-            for i in range(len(activity_timepoints)):
-                for j in range(i + 1, len(activity_timepoints)):
-                    t1 = activity_timepoints[i]
-                    t2 = activity_timepoints[j]
-                    visited_timepoints.add((str(t1), str(t2)))
-                    visited_timepoints.add((str(t2), str(t1)))
 
             for t1, e1 in assign_effects:
-                for t2, e2 in increase_decrease_effects:
+                for t2, e2 in fluent_effects:
                     if t1 == t2 or (str(t1), str(t2)) in visited_timepoints:
                         continue
 
@@ -1060,10 +1131,18 @@ class CPSETimepoints(CPSEBaseEngine):
                     visited_timepoints.add((str(t2), str(t1)))
 
                     self.model.add(
-                        self.model_vars[t1.timepoint] != self.model_vars[t2.timepoint]
+                        self.model_vars[t1.timepoint] + t1.delay
+                        != self.model_vars[t2.timepoint] + t2.delay
                     )
 
-    def add_effect(self, timing: timing.Timing, effect: Effect, value: int):
+    def add_effect(
+        self,
+        timing: timing.Timing,
+        fluent: Fluent,
+        value: FNode,
+        is_assignment: bool,
+        problem: SchedulingProblem,
+    ):
         """
         Adds an effect to the model.
 
@@ -1074,24 +1153,39 @@ class CPSETimepoints(CPSEBaseEngine):
 
         Args:
             timing (timing.Timing): The specific timing at which the effect is applied.
-            effect (Effect): The effect to apply.
-            value (int): The value associated with the effect. This may represent the sum
-                of increase/decrease effects or the exact value of the effect.
+            fluent (Fluent): The fluent to which the effect is applied.
+            value (FNode): The value associated with the effect, represented as a `FNode`. 
+                This may represent the sum of increase/decrease effects or the exact value of the effect.
+            is_assignment (bool): If True, the effect is an assignment; otherwise, it's an increase/decrease effect.
+            problem (SchedulingProblem): The scheduling problem within which the effect is applied.
         """
 
-        fluent_name = effect.fluent.fluent().name
         for i, bool_var in enumerate(
             self.assignment_matrix[(timing.timepoint, timing.delay)]
         ):
-            if effect.is_assignment():
-                self.model.add(
-                    self.resources[fluent_name][i + 1] == value
-                ).only_enforce_if(bool_var)
+            for f in problem.fluents:
+                self.model_vars[f] = self.resources[f.name][i + 1]
+
+            if is_assignment:
+                if fluent.type.is_bool_type():
+                    constraint_var = self.add_constraint(
+                        Iff(fluent, value), cache_enabled=False
+                    )
+                elif fluent.type.is_int_type():
+                    constraint_var = self.add_constraint(
+                        Equals(fluent, value), cache_enabled=False
+                    )
+                else:
+                    raise NotImplementedError(f"Fluent type {fluent.type} not supported.")
+
+                self.model.add_implication(bool_var, constraint_var)
 
             else:
+                assert fluent.type.is_int_type()
+                var = self.add_constraint(value)
                 self.model.add(
-                    self.resources[fluent_name][i + 1]
-                    == (self.resources[fluent_name][i] + value)
+                    self.resources[fluent.name][i + 1]
+                    == (self.resources[fluent.name][i] + var)
                 ).only_enforce_if(bool_var)
 
     def add_effects(self, problem: SchedulingProblem):
@@ -1123,27 +1217,28 @@ class CPSETimepoints(CPSEBaseEngine):
         fluent_inc_dec_effects: Dict[str, Dict["timing.Timing", Effect]] = {}
         for timing, eff in activities_effects + problem.base_effects:
             eff: Effect
-            fluent_name = eff.fluent.fluent().name
-            value = eff.value.int_constant_value()
+            fluent = eff.fluent.fluent()
+
+            if eff.is_assignment():
+                self.add_effect(timing, fluent, eff.value, True, problem)
+                continue
+
+            if fluent.name not in fluent_inc_dec_effects:
+                fluent_inc_dec_effects[fluent.name] = {}
+
+            if timing not in fluent_inc_dec_effects[fluent.name]:
+                fluent_inc_dec_effects[fluent.name][timing] = [fluent, 0]
+
+            # sum values of different effects that occur at the same timepoint
             if eff.is_increase():
-                pass
-            elif eff.is_decrease():
-                value = -value
+                value = Plus(fluent_inc_dec_effects[fluent.name][timing][1], eff.value)
             else:
-                self.add_effect(timing, eff, value)
-
-            if fluent_name not in fluent_inc_dec_effects:
-                fluent_inc_dec_effects[fluent_name] = {}
-
-            if timing not in fluent_inc_dec_effects[fluent_name]:
-                fluent_inc_dec_effects[fluent_name][timing] = [eff, value]
-            else:
-                # sum values of different effects that occur at the same timepoint
-                fluent_inc_dec_effects[fluent_name][timing][1] += value
+                value = Minus(fluent_inc_dec_effects[fluent.name][timing][1], eff.value)
+            fluent_inc_dec_effects[fluent.name][timing][1] = value
 
         for fluent_name in fluent_inc_dec_effects:
-            for timing, (eff, value) in fluent_inc_dec_effects[fluent_name].items():
-                self.add_effect(timing, eff, value)
+            for timing, (fluent, value) in fluent_inc_dec_effects[fluent_name].items():
+                self.add_effect(timing, fluent, value, False, problem)
 
         # for each resource
         #   for each timepoint
