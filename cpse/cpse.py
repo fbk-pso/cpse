@@ -90,8 +90,6 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         lower_bound (int): The minimum bound for variables in the model, defaulting to 0.
         upper_bound (int): The maximum bound for variables in the model, defaulting to INT32_MAX.
         model (cp_model.CpModel): The underlying constraint programming model.
-        model_vars (Dict[Union[timing.Timepoint, Parameter, Fluent], cp_model.IntVar]): A mapping
-            of timepoints, parameters and fluents to the corresponding integer variables in the model.
     """
 
     def __init__(self, **kwargs):
@@ -105,7 +103,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         # dictionary of activities keyed by name
         self._activities: Dict[str, activity_type] = {}
         # mapping timepoints, parameters and fluents to the corresponding integer variables in the model
-        self.model_vars: Dict[
+        self._model_vars: Dict[
             Union[timing.Timepoint, Parameter, Fluent], cp_model.IntVar
         ] = {}
         # mapping fluent to its lower bound, upper bound and initial value
@@ -189,9 +187,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             cp_model.LinearExprT: The corresponding linear expression in the model.
         """
 
-        assert t.timepoint in self.model_vars
+        assert t.timepoint in self._model_vars
         assert isinstance(t.delay, int)
-        return cp_model.LinearExpr.sum([self.model_vars[t.timepoint], t.delay])
+        return cp_model.LinearExpr.sum([self._model_vars[t.timepoint], t.delay])
 
     def _get_lower_upper_bounds(self, fluent: Fluent) -> Tuple[int, int]:
         """
@@ -242,7 +240,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 assert lower_bound <= initial_value.int_constant_value() <= upper_bound
             self._fluents[fluent.name] = [lower_bound, upper_bound, initial_value]
 
-        # TODO: can a fluent be uninitialized?
+        # uninitialized fluents
         for fluent in problem.fluents:
             if fluent.name in self._fluents:
                 continue
@@ -281,8 +279,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             else:
                 raise NotImplementedError(f"Parameter type {param.type} not supported.")
 
-            assert param not in self.model_vars
-            self.model_vars[param] = var
+            assert param not in self._model_vars
+            self._model_vars[param] = var
 
     def add_activity(self, activity: Activity):
         """
@@ -328,8 +326,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self._activities[activity.name] = activity_type(
             start=start_var, end=end_var, interval=interval_var, up_activity=activity
         )
-        self.model_vars[activity.start] = start_var
-        self.model_vars[activity.end] = end_var
+        self._model_vars[activity.start] = start_var
+        self._model_vars[activity.end] = end_var
         self._variables_cache[f"interval [{activity.start}, {activity.end}]"] = (
             interval_var
         )
@@ -367,17 +365,17 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 results.append(self._variables_cache[repr(fnode)])
 
             elif fnode.is_parameter_exp():
-                results.append(self.model_vars[fnode.parameter()])
+                results.append(self._model_vars[fnode.parameter()])
 
             elif fnode.is_timing_exp():
                 results.append(self._convert_timing_to_linear_expr(fnode.timing()))
 
             elif fnode.is_fluent_exp():
-                if fnode.fluent() not in self.model_vars:
+                if fnode.fluent() not in self._model_vars:
                     raise NotImplementedError(
                         f"Node type {fnode.node_type} not supported."
                     )
-                results.append(self.model_vars[fnode.fluent()])
+                results.append(self._model_vars[fnode.fluent()])
 
             elif fnode.node_type in [
                 OperatorKind.BOOL_CONSTANT,
@@ -606,8 +604,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             )
 
             # add global start and end to the model variables
-            self.model_vars[timing.GlobalStartTiming(delay=0).timepoint] = 0
-            self.model_vars[timing.GlobalEndTiming().timepoint] = makespan_var
+            self._model_vars[timing.GlobalStartTiming(delay=0).timepoint] = 0
+            self._model_vars[timing.GlobalEndTiming().timepoint] = makespan_var
 
             # add problem-specific and activity-related effects to the model
             self.add_effects(problem)
@@ -644,7 +642,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
                 # map a decision variable to its solution value
                 assignment = {}
-                for up_var, cp_var in self.model_vars.items():
+                for up_var, cp_var in self._model_vars.items():
                     assignment[up_var] = solver.value(cp_var)
                     # map a boolean parameter to its boolean value rather than the
                     # integer value returned by the solver
@@ -850,7 +848,7 @@ class CPSE(CPSEBaseEngine):
             start_delay += time_interval.lower.delay
         if time_interval.is_left_open():
             start_delay += 1
-        start = self.model_vars[time_interval.lower.timepoint] + start_delay
+        start = self._model_vars[time_interval.lower.timepoint] + start_delay
 
         # add 1 to end because `add_cumulative` enforces the constraint for t in [start, end),
         # but we want the constraint to be enforced also at the end
@@ -859,7 +857,7 @@ class CPSE(CPSEBaseEngine):
             end_delay += time_interval.upper.delay
         if time_interval.is_right_open():
             end_delay -= 1
-        end = self.model_vars[time_interval.upper.timepoint] + end_delay
+        end = self._model_vars[time_interval.upper.timepoint] + end_delay
 
         interval_key = f"interval [{time_interval.lower.timepoint} + {start_delay}, {time_interval.upper.timepoint} + {end_delay}]"
         if interval_key not in self._variables_cache:
@@ -928,8 +926,14 @@ class CPSETimepoints(CPSEBaseEngine):
         return "CPSETimepoints"
 
     @staticmethod
+    def supported_kind() -> ProblemKind:
+        supported_kind = CPSEBaseEngine.supported_kind()
+        supported_kind.set_initial_state("UNDEFINED_INITIAL_NUMERIC")
+        return supported_kind
+
+    @staticmethod
     def supports(problem_kind: ProblemKind) -> bool:
-        return problem_kind <= CPSEBaseEngine.supported_kind()
+        return problem_kind <= CPSETimepoints.supported_kind()
 
     def _fnode_timings(self, fnode: FNode) -> Iterable["timing.Timing"]:
         stack = [fnode]
@@ -995,7 +999,7 @@ class CPSETimepoints(CPSEBaseEngine):
         self.assignment_matrix = {}
         for i in range(len(problem_timings)):
             timing = problem_timings[i]
-            timepoint_var = self.model_vars[timing[0]]
+            timepoint_var = self._model_vars[timing[0]]
             self.assignment_matrix[timing] = []
             for tp in self.timepoints:
                 bool_var = self.model.new_bool_var(f"{timing}@{tp}")
@@ -1026,7 +1030,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 self.resources[fluent.name].append(resource_var)
 
         for fluent in problem.fluents:
-            self.model_vars[fluent] = self.resources[fluent.name][0]
+            self._model_vars[fluent] = self.resources[fluent.name][0]
 
         for fluent in problem.fluents:
             lb, ub, init_value = self._fluents[fluent.name]
@@ -1071,7 +1075,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 # for each timepoint, add a constraint defined on the fluents at that timepoint
                 for i in range(len(self.timepoints)):
                     for fluent in problem.fluents:
-                        self.model_vars[fluent] = self.resources[fluent.name][i + 1]
+                        self._model_vars[fluent] = self.resources[fluent.name][i + 1]
                     bool_var = self.add_constraint(fnode, cache_enabled=False)
                     self.model.add_bool_and([bool_var])
 
@@ -1131,8 +1135,8 @@ class CPSETimepoints(CPSEBaseEngine):
                     visited_timepoints.add((str(t2), str(t1)))
 
                     self.model.add(
-                        self.model_vars[t1.timepoint] + t1.delay
-                        != self.model_vars[t2.timepoint] + t2.delay
+                        self._model_vars[t1.timepoint] + t1.delay
+                        != self._model_vars[t2.timepoint] + t2.delay
                     )
 
     def add_effect(
@@ -1154,7 +1158,7 @@ class CPSETimepoints(CPSEBaseEngine):
         Args:
             timing (timing.Timing): The specific timing at which the effect is applied.
             fluent (Fluent): The fluent to which the effect is applied.
-            value (FNode): The value associated with the effect, represented as a `FNode`. 
+            value (FNode): The value associated with the effect, represented as a `FNode`.
                 This may represent the sum of increase/decrease effects or the exact value of the effect.
             is_assignment (bool): If True, the effect is an assignment; otherwise, it's an increase/decrease effect.
             problem (SchedulingProblem): The scheduling problem within which the effect is applied.
@@ -1164,7 +1168,7 @@ class CPSETimepoints(CPSEBaseEngine):
             self.assignment_matrix[(timing.timepoint, timing.delay)]
         ):
             for f in problem.fluents:
-                self.model_vars[f] = self.resources[f.name][i + 1]
+                self._model_vars[f] = self.resources[f.name][i + 1]
 
             if is_assignment:
                 if fluent.type.is_bool_type():
@@ -1176,7 +1180,9 @@ class CPSETimepoints(CPSEBaseEngine):
                         Equals(fluent, value), cache_enabled=False
                     )
                 else:
-                    raise NotImplementedError(f"Fluent type {fluent.type} not supported.")
+                    raise NotImplementedError(
+                        f"Fluent type {fluent.type} not supported."
+                    )
 
                 self.model.add_implication(bool_var, constraint_var)
 
@@ -1304,14 +1310,14 @@ class CPSETimepoints(CPSEBaseEngine):
             start_delay += time_interval.lower.delay
         if time_interval.is_left_open():
             start_delay += 1
-        start = self.model_vars[time_interval.lower.timepoint] + start_delay
+        start = self._model_vars[time_interval.lower.timepoint] + start_delay
 
         end_delay = 0
         if time_interval.upper.delay != 0:
             end_delay += time_interval.upper.delay
         if time_interval.is_right_open():
             end_delay -= 1
-        end = self.model_vars[time_interval.upper.timepoint] + end_delay
+        end = self._model_vars[time_interval.upper.timepoint] + end_delay
 
         # if there are no fluents in the condition, a constraint should be added
         if not self._fnode_contains_fluents(fnode):
@@ -1325,7 +1331,7 @@ class CPSETimepoints(CPSEBaseEngine):
         #   (start <= timepoint <= end) => constraint
         for i in range(len(self.timepoints)):
             for fluent in problem.fluents:
-                self.model_vars[fluent] = self.resources[fluent.name][i + 1]
+                self._model_vars[fluent] = self.resources[fluent.name][i + 1]
 
             constraint_var = self.add_constraint(fnode, cache_enabled=False)
 
