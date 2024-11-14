@@ -604,6 +604,9 @@ class TestCPSETimepoints(CommonTests):
                 )
             )
         )
+        problem.add_constraint(LE(activity1.end, 100))
+        problem.add_constraint(LE(activity2.end, 100))
+        problem.add_constraint(LE(activity3.end, 100))
 
         self.problem_unsolvable(problem)
 
@@ -648,6 +651,27 @@ class TestCPSETimepoints(CommonTests):
         problem.add_constraint(LE(activity2.end, 11))
 
         self.problem_unsolvable(problem)
+
+    def test_effect_with_fluent_expression(self, problem: SchedulingProblem):
+        resource1 = problem.add_fluent(
+            "resource1",
+            get_environment().type_manager.IntType(),
+            default_initial_value=0,
+        )
+        resource2 = problem.add_fluent(
+            "resource2",
+            get_environment().type_manager.IntType(),
+            default_initial_value=1,
+        )
+
+        activity1 = problem.add_activity("activity1", duration=5)
+        activity2 = problem.add_activity("activity2", duration=5)
+        problem.add_constraint(LE(activity1.end, activity2.start))
+
+        problem.add_effect(activity1.end, resource1, Times(resource2, 2))
+        activity2.uses(resource1, 2)
+
+        self.problem_solved_satisficing_or_optimally(problem)
 
     def test_condition_with_ClosedTimeInterval(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=10)
@@ -833,4 +857,22 @@ class TestCPSETimepoints(CommonTests):
             get_environment().type_manager.IntType(lower_bound=-1, upper_bound=11),
         )
         problem.add_activity("activity", 5)
+        self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_set_fluent_initial_value_as_fluent_exp(self, problem: SchedulingProblem):
+        fluent1 = problem.add_fluent(
+            "fluent1",
+            get_environment().type_manager.IntType(lower_bound=0),
+            default_initial_value=1,
+        )
+        fluent2 = problem.add_fluent(
+            "fluent2",
+            get_environment().type_manager.IntType(lower_bound=0),
+            default_initial_value=Times(fluent1, 2),
+        )
+
+        activity = problem.add_activity("activity", duration=5)
+        activity.add_decrease_effect(activity.start, fluent1, 1)
+        activity.add_decrease_effect(activity.start, fluent2, 2)
+
         self.problem_solved_satisficing_or_optimally(problem)
