@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Unified Planning Integration for OR-Tools CP-SAT Model"""
-from typing import IO, Callable, Optional, List, Tuple, Union, Dict, Set, Iterable
+from typing import IO, Callable, Optional, List, Tuple, Union, Dict, Set, Iterable, Any
 from abc import abstractmethod
 import collections
 import operator
@@ -332,27 +332,27 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             interval_var
         )
 
-    def add_constraint(
-        self, fnode: FNode, cache_enabled=True
-    ) -> Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+    def fnode_to_value_or_variable(
+        self, fnode: FNode
+    ) -> Union[cp_model.IntVar, cp_model.LinearExprT, bool, int, Any]:
         """
-        Adds the constraint represented by the given FNode to the model.
+        Converts an FNode to its corresponding value or variable representation
+        in the model.
 
-        The constraint expression is processed recursively from the leaves of
-        the expression tree to the root node. For each boolean expression, a
-        boolean variable is created to represent the expression itself, which
-        is then used in the parent node.
+        This method processes the given FNode and returns the corresponding
+        value or variable. The FNode may represent a constant value, a boolean
+        expression, an integer expression, a parameter expression, a timing
+        expression, or a fluent expression.
 
         Args:
-            fnode (FNode): The FNode representing the constraint to be added.
-                The constraint must be a boolean expression.
+            fnode (FNode): The FNode representing an expression.
 
         Returns:
-            Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
-                A boolean variable (or its negation) representing the constraint.
+            Union[cp_model.IntVar, cp_model.LinearExprT, bool, int, Any]:
+                The corresponding value or variable for the FNode. This can be
+                an `IntVar`, integer, boolean, a linear expression or the result
+                of applying an operator.
         """
-
-        # TODO(cpse-timepoints): cannot use cache on fnodes with fluents
 
         stack = [(fnode, False)]
         results = []
@@ -360,11 +360,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         while len(stack) > 0:
             fnode, processed = stack.pop()
 
-            # check if fnode cached
-            if cache_enabled and not processed and repr(fnode) in self._variables_cache:
-                results.append(self._variables_cache[repr(fnode)])
-
-            elif fnode.is_parameter_exp():
+            if fnode.is_parameter_exp():
                 results.append(self._model_vars[fnode.parameter()])
 
             elif fnode.is_timing_exp():
@@ -397,6 +393,65 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     op = _OPERATOR_MAP[fnode.node_type]
                     args = [results.pop() for arg in fnode.args]
                     results.append(op(*args))
+
+            elif fnode.node_type == OperatorKind.NOT:
+                if not processed:
+                    stack.append((fnode, True))
+                    stack.append((fnode.args[0], False))
+                else:
+                    results.append(results.pop().negated())
+
+            else:
+                raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
+
+        assert len(results) == 1
+        return results[0]
+
+    def add_constraint(
+        self, fnode: FNode, cache_enabled: bool = True
+    ) -> Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+        """
+        Adds the constraint represented by the given FNode to the model.
+
+        The constraint expression is processed recursively from the leaves of
+        the expression tree to the root node. For each boolean expression, a
+        boolean variable is created to represent the expression itself, which
+        is then used in the parent node.
+
+        Args:
+            fnode (FNode): The FNode representing the constraint to be added.
+                The constraint must be a boolean expression.
+            cache_enabled (bool): Whether to use cached values for efficiency.
+
+        Returns:
+            Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+                A boolean variable (or its negation) representing the constraint.
+        """
+
+        # TODO(cpse-timepoints): cannot use cache on fnodes with fluents
+
+        stack = [(fnode, False)]
+        results = []
+
+        while len(stack) > 0:
+            fnode, processed = stack.pop()
+
+            # check if fnode cached
+            if cache_enabled and not processed and repr(fnode) in self._variables_cache:
+                results.append(self._variables_cache[repr(fnode)])
+
+            elif fnode.node_type in [
+                OperatorKind.PARAM_EXP,
+                OperatorKind.TIMING_EXP,
+                OperatorKind.FLUENT_EXP,
+                OperatorKind.BOOL_CONSTANT,
+                OperatorKind.INT_CONSTANT,
+                OperatorKind.PLUS,
+                OperatorKind.MINUS,
+                OperatorKind.TIMES,
+                OperatorKind.DIV,
+            ]:
+                results.append(self.fnode_to_value_or_variable(fnode))
 
             elif fnode.node_type == OperatorKind.NOT:
                 if not processed:
@@ -485,10 +540,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
 
         assert len(results) == 1
-        # TODO: define an appropriate method that returns a value expression
-        # assert isinstance(results[0], cp_model.IntVar) or isinstance(
-        #     results[0], cp_model._NotBooleanVariable
-        # )
+        assert isinstance(results[0], cp_model.IntVar) or isinstance(
+            results[0], cp_model._NotBooleanVariable
+        )
         return results[0]
 
     @abstractmethod
@@ -929,6 +983,7 @@ class CPSETimepoints(CPSEBaseEngine):
     def supported_kind() -> ProblemKind:
         supported_kind = CPSEBaseEngine.supported_kind()
         supported_kind.set_initial_state("UNDEFINED_INITIAL_NUMERIC")
+        supported_kind.set_effects_kind("FLUENTS_IN_NUMERIC_ASSIGNMENTS")
         return supported_kind
 
     @staticmethod
@@ -1188,7 +1243,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
             else:
                 assert fluent.type.is_int_type()
-                var = self.add_constraint(value)
+                var = self.fnode_to_value_or_variable(value)
                 self.model.add(
                     self.resources[fluent.name][i + 1]
                     == (self.resources[fluent.name][i] + var)
