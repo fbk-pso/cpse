@@ -123,6 +123,32 @@ class CommonTests:
         assert res.plan.get(activity.start).constant_value() == 10
         assert res.plan.get(activity.end).constant_value() == 14
 
+    def test_activity_duration_as_parameter_exp1(self, problem: SchedulingProblem):
+        activity = problem.add_activity("activity", duration=5)
+        int_var = problem.add_variable(
+            "int_var", get_environment().type_manager.IntType()
+        )
+        problem.add_constraint(Equals(int_var, 5))
+        activity.set_fixed_duration(Times(int_var, 2))
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert (
+            res.plan.get(activity.end).constant_value()
+            - res.plan.get(activity.start).constant_value()
+        ) == 10
+
+    def test_activity_duration_as_parameter_exp2(self, problem: SchedulingProblem):
+        activity = problem.add_activity("activity", duration=5)
+        int_var = problem.add_variable(
+            "int_var", get_environment().type_manager.IntType()
+        )
+        problem.add_constraint(Equals(int_var, 5))
+        activity.set_duration_bounds(Times(int_var, 2), Times(int_var, 3))
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert res.plan.get(activity.start).constant_value() == 10
+        assert res.plan.get(activity.end).constant_value() == 15
+
     def test_activity_deadline_and_release_date(self, problem: SchedulingProblem):
         activity1 = problem.add_activity("activity1", duration=5)
         activity2 = problem.add_activity("activity2", duration=5)
@@ -484,15 +510,6 @@ class CommonTests:
         activity.add_parameter("param2", get_environment().type_manager.RealType())
         assert not self.engine_class().supports(problem.kind)
 
-    def test_not_supported_parameters_in_duration(self, problem: SchedulingProblem):
-        activity = problem.add_activity("activity", duration=5)
-        int_var = problem.add_variable(
-            "int_var", get_environment().type_manager.IntType()
-        )
-        activity.set_fixed_duration(int_var)
-
-        self.problem_unsupported(problem)
-
     def test_not_supported_quality_metrics(self, problem: SchedulingProblem):
         problem.add_activity("activity", duration=5)
         problem.add_quality_metric(MinimizeSequentialPlanLength())
@@ -571,6 +588,34 @@ class TestCPSETimepoints(CommonTests):
 
     def engine_class(self):
         return CPSETimepoints
+
+    def test_activity_duration_as_fluent_exp1(self, problem: SchedulingProblem):
+        activity = problem.add_activity("activity", duration=5)
+        fluent = problem.add_fluent(
+            "fluent",
+            get_environment().type_manager.IntType(),
+            default_initial_value=5,
+        )
+        activity.set_fixed_duration(Times(fluent, 2))
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert (
+            res.plan.get(activity.end).constant_value()
+            - res.plan.get(activity.start).constant_value()
+        ) == 10
+
+    def test_activity_duration_as_fluent_exp2(self, problem: SchedulingProblem):
+        activity = problem.add_activity("activity", duration=5)
+        fluent = problem.add_fluent(
+            "fluent",
+            get_environment().type_manager.IntType(),
+            default_initial_value=5,
+        )
+        activity.set_duration_bounds(Times(fluent, 2), Times(fluent, 3))
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert res.plan.get(activity.start).constant_value() == 10
+        assert res.plan.get(activity.end).constant_value() == 15
 
     def test_constraint_on_resource(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=1)
