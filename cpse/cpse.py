@@ -89,6 +89,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         ] = {}
         # mapping fluent to its lower bound, upper bound and initial value
         self._fluents: Dict[str, List[int]] = {}
+        # constraints to be applied just before solving the problem
+        self._postponed_constraints: List[Callable] = []
 
         # counters for generating anonymous variables
         self._bool_var_counter: int = -1
@@ -263,6 +265,70 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             assert param not in self._model_vars
             self._model_vars[param] = var
 
+    def _add_activity_timepoints(self, activity: Activity) -> Tuple[
+        Union[int, cp_model.IntVar],
+        Union[int, cp_model.IntVar],
+        Union[int, cp_model.IntVar],
+    ]:
+        """
+        Adds variables for the start, end, and duration timepoints of an activity, and enforces
+        constraints on them.
+
+        Args:
+            activity (Activity): The activity for which timepoints are being defined.
+
+        Returns:
+            Tuple[Union[int, cp_model.IntVar], Union[int, cp_model.IntVar], Union[int, cp_model.IntVar]]:
+                A tuple containing the start time, end time, and duration for the activity,
+                each represented as either an integer (for fixed values) or a model variable.
+        """
+
+        assert (
+            not activity.duration.is_left_open()
+            and not activity.duration.is_right_open()
+        )
+        lower = activity.duration.lower
+        upper = activity.duration.upper
+        if lower.is_int_constant() and upper.is_int_constant():
+            lower = lower.int_constant_value()
+            upper = upper.int_constant_value()
+            if lower == upper:
+                # FixedDuration
+                start_var = self.model.new_int_var(
+                    self.lower_bound, self.upper_bound, "start_" + activity.name
+                )
+                end_var = self.model.new_int_var(
+                    self.lower_bound, self.upper_bound, "end_" + activity.name
+                )
+                duration_var = upper
+            else:
+                # ClosedDurationInterval
+                start_var = lower
+                end_var = upper
+                duration_var = upper - lower
+        else:
+            start_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "start_" + activity.name
+            )
+            end_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "end_" + activity.name
+            )
+            duration_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "duration_" + activity.name
+            )
+            if lower == upper:
+                # FixedDuration
+                duration_exp = self.fnode_to_value_or_variable(upper)
+                self.model.add(duration_var == duration_exp)
+            else:
+                # ClosedDurationInterval
+                lower_exp = self.fnode_to_value_or_variable(lower)
+                self.model.add(start_var == lower_exp)
+                upper_exp = self.fnode_to_value_or_variable(upper)
+                self.model.add(end_var == upper_exp)
+
+        return start_var, duration_var, end_var
+
     def add_activity(self, activity: Activity):
         """
         Adds an activity to the model. Each activity is modeled using an interval.
@@ -271,38 +337,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             activity (Activity): The activity to be added to the model.
         """
 
-        # assume FixedDuration or ClosedDurationInterval
-        if not (
-            activity.duration.lower.is_int_constant()
-            and activity.duration.upper.is_int_constant()
-            and not activity.duration.is_left_open()
-            and not activity.duration.is_right_open()
-        ):
-            # TODO: support bounds defined using a parameter and STATIC_FLUENTS_IN_DURATION ?
-            raise NotImplementedError(
-                "Activity duration bounds must be closed and of integer type."
-            )
-
-        lower = activity.duration.lower.int_constant_value()
-        upper = activity.duration.upper.int_constant_value()
-
-        if lower == upper:
-            # FixedDuration
-            start_var = self.model.new_int_var(
-                self.lower_bound, self.upper_bound, "start_" + activity.name
-            )
-            end_var = self.model.new_int_var(
-                self.lower_bound, self.upper_bound, "end_" + activity.name
-            )
-            duration = upper
-        else:
-            # ClosedDurationInterval
-            start_var = lower
-            end_var = upper
-            duration = upper - lower
-
+        start_var, duration_var, end_var = self._add_activity_timepoints(activity)
         interval_var = self.model.new_interval_var(
-            start_var, duration, end_var, activity.name
+            start_var, duration_var, end_var, activity.name
         )
         self._activities[activity.name] = activity_type(
             start=start_var, end=end_var, interval=interval_var, up_activity=activity
@@ -636,6 +673,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             # add quality metrics to the model
             self.add_quality_metrics(problem, makespan_var)
 
+            for postponed_constraint in self._postponed_constraints:
+                postponed_constraint()
+
             # solve the modeled problem
             solver = cp_model.CpSolver()
             if timeout is not None:
@@ -938,7 +978,7 @@ class CPSETimepoints(CPSEBaseEngine):
         self.assignment_matrix: Dict[
             Tuple[timing.Timepoint, int], List[cp_model.IntVar]
         ] = {}
-        self.resources: Dict[str, List[cp_model.IntVar]] = {}
+        self.resources: Dict[Fluent, List[cp_model.IntVar]] = {}
 
     @property
     def name(self) -> str:
@@ -949,11 +989,88 @@ class CPSETimepoints(CPSEBaseEngine):
         supported_kind = CPSEBaseEngine.supported_kind()
         supported_kind.set_initial_state("UNDEFINED_INITIAL_NUMERIC")
         supported_kind.set_effects_kind("FLUENTS_IN_NUMERIC_ASSIGNMENTS")
+        supported_kind.set_expression_duration("FLUENTS_IN_DURATIONS")
         return supported_kind
 
     @staticmethod
     def supports(problem_kind: ProblemKind) -> bool:
         return problem_kind <= CPSETimepoints.supported_kind()
+
+    def _add_activity_timepoints(self, activity: Activity) -> Tuple[
+        Union[int, cp_model.IntVar],
+        Union[int, cp_model.IntVar],
+        Union[int, cp_model.IntVar],
+    ]:
+        """
+        Adds variables for the start, end, and duration timepoints of an activity, and enforces
+        constraints on them.
+
+        Args:
+            activity (Activity): The activity for which timepoints are being defined.
+
+        Returns:
+            Tuple[Union[int, cp_model.IntVar], Union[int, cp_model.IntVar], Union[int, cp_model.IntVar]]:
+                A tuple containing the start time, end time, and duration for the activity,
+                each represented as either an integer (for fixed values) or a model variable.
+        """
+
+        # TODO: avoid code duplication
+
+        assert (
+            not activity.duration.is_left_open()
+            and not activity.duration.is_right_open()
+        )
+        lower = activity.duration.lower
+        upper = activity.duration.upper
+        if lower.is_int_constant() and upper.is_int_constant():
+            lower = lower.int_constant_value()
+            upper = upper.int_constant_value()
+            if lower == upper:
+                # FixedDuration
+                start_var = self.model.new_int_var(
+                    self.lower_bound, self.upper_bound, "start_" + activity.name
+                )
+                end_var = self.model.new_int_var(
+                    self.lower_bound, self.upper_bound, "end_" + activity.name
+                )
+                duration_var = upper
+            else:
+                # ClosedDurationInterval
+                start_var = lower
+                end_var = upper
+                duration_var = upper - lower
+        else:
+            start_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "start_" + activity.name
+            )
+            end_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "end_" + activity.name
+            )
+            duration_var = self.model.new_int_var(
+                self.lower_bound, self.upper_bound, "duration_" + activity.name
+            )
+            if lower == upper:
+                # FixedDuration
+                def constrain_duration():
+                    for fluent in self.resources:
+                        self._model_vars[fluent] = self.resources[fluent][0]
+                    duration_exp = self.fnode_to_value_or_variable(upper)
+                    self.model.add(duration_var == duration_exp)
+
+                self._postponed_constraints.append(constrain_duration)
+            else:
+                # ClosedDurationInterval
+                def constrain_start_end():
+                    for fluent in self.resources:
+                        self._model_vars[fluent] = self.resources[fluent][0]
+                    lower_exp = self.fnode_to_value_or_variable(lower)
+                    self.model.add(start_var == lower_exp)
+                    upper_exp = self.fnode_to_value_or_variable(upper)
+                    self.model.add(end_var == upper_exp)
+
+                self._postponed_constraints.append(constrain_start_end)
+
+        return start_var, duration_var, end_var
 
     def _fnode_timings(self, fnode: FNode) -> Iterable["timing.Timing"]:
         stack = [fnode]
@@ -1042,22 +1159,22 @@ class CPSETimepoints(CPSEBaseEngine):
         for fluent in problem.fluents:
             lb, ub, init_value = self._fluents[fluent.name]
             init_value_var = self.model.new_int_var(lb, ub, f"{fluent}_init_value")
-            self.resources[fluent.name] = [init_value_var]
+            self.resources[fluent] = [init_value_var]
             for i in range(len(self.timepoints)):
                 resource_var = self.model.new_int_var(
                     lb, ub, f"{fluent.name}@{self.timepoints[i]}"
                 )
-                self.resources[fluent.name].append(resource_var)
+                self.resources[fluent].append(resource_var)
 
         for fluent in problem.fluents:
-            self._model_vars[fluent] = self.resources[fluent.name][0]
+            self._model_vars[fluent] = self.resources[fluent][0]
 
         for fluent in problem.fluents:
             lb, ub, init_value = self._fluents[fluent.name]
             if init_value is None:
                 # uninitialized fluent
                 continue
-            init_value_var = self.resources[fluent.name][0]
+            init_value_var = self.resources[fluent][0]
 
             if fluent.type.is_bool_type():
                 constraint_var = self.add_constraint(
@@ -1095,7 +1212,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 # for each timepoint, add a constraint defined on the fluents at that timepoint
                 for i in range(len(self.timepoints)):
                     for fluent in problem.fluents:
-                        self._model_vars[fluent] = self.resources[fluent.name][i + 1]
+                        self._model_vars[fluent] = self.resources[fluent][i + 1]
                     bool_var = self.add_constraint(fnode, cache_enabled=False)
                     self.model.add_bool_and([bool_var])
 
@@ -1188,7 +1305,7 @@ class CPSETimepoints(CPSEBaseEngine):
             self.assignment_matrix[(timing.timepoint, timing.delay)]
         ):
             for f in problem.fluents:
-                self._model_vars[f] = self.resources[f.name][i + 1]
+                self._model_vars[f] = self.resources[f][i + 1]
 
             if is_assignment:
                 if fluent.type.is_bool_type():
@@ -1210,8 +1327,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 assert fluent.type.is_int_type()
                 var = self.fnode_to_value_or_variable(value)
                 self.model.add(
-                    self.resources[fluent.name][i + 1]
-                    == (self.resources[fluent.name][i] + var)
+                    self.resources[fluent][i + 1] == (self.resources[fluent][i] + var)
                 ).only_enforce_if(bool_var)
 
     def add_effects(self, problem: SchedulingProblem):
@@ -1270,8 +1386,8 @@ class CPSETimepoints(CPSEBaseEngine):
         #   for each timepoint
         #       if no activities have effects on that resource at that timepoint
         #           resource@tp(i) == resource@tp(i-1)
-        for fluent_name in self.resources:
-            fluent_effects = self._filter_fluent_effects(problem, fluent_name)
+        for fluent in self.resources:
+            fluent_effects = self._filter_fluent_effects(problem, fluent.name)
             for i, tp in enumerate(self.timepoints):
                 assignment_vars = list(
                     map(
@@ -1283,7 +1399,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 )
                 bool_var = self.new_bool_var()
                 self.model.add(
-                    self.resources[fluent_name][i + 1] == self.resources[fluent_name][i]
+                    self.resources[fluent][i + 1] == self.resources[fluent][i]
                 ).only_enforce_if(bool_var)
                 # not(assignment_vars[0] or ... or assignment_vars[-1]) => bool_var
                 self.model.add_bool_or(assignment_vars + [bool_var])
@@ -1351,7 +1467,7 @@ class CPSETimepoints(CPSEBaseEngine):
         #   (start <= timepoint <= end) => constraint
         for i in range(len(self.timepoints)):
             for fluent in problem.fluents:
-                self._model_vars[fluent] = self.resources[fluent.name][i + 1]
+                self._model_vars[fluent] = self.resources[fluent][i + 1]
 
             constraint_var = self.add_constraint(fnode, cache_enabled=False)
 
