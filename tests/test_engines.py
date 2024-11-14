@@ -43,6 +43,7 @@ class CommonTests:
     ) -> PlanGenerationResult:
         with OneshotPlanner(name=self.engine_name()) as planner:
             res = planner.solve(problem)
+            print(res.log_messages)
             assert res.status in [
                 PlanGenerationResultStatus.SOLVED_SATISFICING,
                 PlanGenerationResultStatus.SOLVED_OPTIMALLY,
@@ -55,6 +56,7 @@ class CommonTests:
     def problem_unsolvable(self, problem: SchedulingProblem) -> PlanGenerationResult:
         with OneshotPlanner(name=self.engine_name()) as planner:
             res = planner.solve(problem)
+            print(res.log_messages)
             assert res.status == PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY
             assert res.plan is None
             return res
@@ -63,6 +65,7 @@ class CommonTests:
     def problem_unsupported(self, problem: SchedulingProblem) -> PlanGenerationResult:
         with OneshotPlanner(name=self.engine_name()) as planner:
             res = planner.solve(problem)
+            print(res.log_messages)
             assert res.status == PlanGenerationResultStatus.UNSUPPORTED_PROBLEM
             assert res.plan is None
             return res
@@ -119,6 +122,20 @@ class CommonTests:
         res = self.problem_solved_satisficing_or_optimally(problem)
         assert res.plan.get(activity.start).constant_value() == 10
         assert res.plan.get(activity.end).constant_value() == 14
+
+    def test_activity_deadline_and_release_date(self, problem: SchedulingProblem):
+        activity1 = problem.add_activity("activity1", duration=5)
+        activity2 = problem.add_activity("activity2", duration=5)
+        activity1.add_deadline(Plus(activity2.end, 3))
+        activity1.add_release_date(Minus(activity2.start, 3))
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        activity1_start = res.plan.get(activity1.start).constant_value()
+        activity1_end = res.plan.get(activity1.end).constant_value()
+        activity2_start = res.plan.get(activity2.start).constant_value()
+        activity2_end = res.plan.get(activity2.end).constant_value()
+        assert (activity2_start - 3) <= activity1_start
+        assert activity1_end <= (activity2_end + 3)
 
     def test_set_fluent_initial_value(self, problem: SchedulingProblem):
         resource = problem.add_resource("resource", capacity=2)
@@ -385,6 +402,38 @@ class CommonTests:
                 num_activities * duration
             )
 
+    def test_int_fluent_with_constant_values(self, problem: SchedulingProblem):
+        fluent = problem.add_fluent(
+            "fluent",
+            get_environment().type_manager.IntType(lower_bound=0),
+            default_initial_value=0,
+        )
+
+        activity = problem.add_activity("activity", duration=5)
+        activity.add_increase_effect(activity.start + 1, fluent, 1)
+        activity.add_decrease_effect(activity.end, fluent, 1)
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_fluent_set_initial_value(self, problem: SchedulingProblem):
+        fluent = problem.add_fluent(
+            "fluent",
+            get_environment().type_manager.IntType(lower_bound=0, upper_bound=1),
+        )
+        problem.set_initial_value(fluent, 1)
+
+        activity = problem.add_activity("activity", duration=5)
+        activity.add_increase_effect(activity.start + 1, fluent, 1)
+        activity.add_decrease_effect(activity.end, fluent, 1)
+
+        self.problem_unsolvable(problem)
+
+    def test_bool_fluent_with_constant_value(self, problem: SchedulingProblem):
+        fluent = problem.add_fluent("fluent", default_initial_value=True)
+        problem.set_initial_value(fluent, False)
+        activity = problem.add_activity("activity", duration=5)
+        self.problem_solved_satisficing_or_optimally(problem)
+
     def test_simple_problem(self, problem: SchedulingProblem):
         machine = problem.add_resource("machine", capacity=1)
 
@@ -506,6 +555,15 @@ class TestCPSE(CommonTests):
 
         self.problem_unsupported(problem)
 
+    def test_not_supported_uninitialized_fluent(self, problem: SchedulingProblem):
+        fluent = problem.add_fluent(
+            "fluent",
+            get_environment().type_manager.IntType(lower_bound=-1, upper_bound=11),
+        )
+        activity = problem.add_activity("activity", 5)
+        problem.add_increase_effect(activity.start, fluent, 1)
+        self.problem_unsupported(problem)
+
 
 class TestCPSETimepoints(CommonTests):
     def engine_name(self):
@@ -521,6 +579,75 @@ class TestCPSETimepoints(CommonTests):
         problem.add_constraint(LE(resource, 2))
 
         self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_assign_effect(self, problem: SchedulingProblem):
+        resource = problem.add_resource("resource", capacity=4)
+        problem.set_initial_value(resource, 0)
+
+        activity1 = problem.add_activity("activity1", duration=4)
+        activity2 = problem.add_activity("activity2", duration=5)
+        activity3 = problem.add_activity("activity3", duration=6)
+
+        activity1.add_effect(activity1.end, resource, 2)
+
+        activity2.add_decrease_effect(activity2.start, resource, 2)
+        problem.add_increase_effect(activity2.end, resource, 4)
+
+        activity3.add_decrease_effect(activity3.start, resource, 4)
+
+        # should be activity1.end <= activity2.start <= activity2.end <= activity3.start
+        problem.add_constraint(
+            Not(
+                And(
+                    LE(activity1.end, activity2.start),
+                    LE(activity2.end, activity3.start),
+                )
+            )
+        )
+
+        self.problem_unsolvable(problem)
+
+    def test_effect_with_time_expression(self, problem: SchedulingProblem):
+        resource = problem.add_resource("resource", capacity=4)
+        problem.set_initial_value(resource, 0)
+
+        activity1 = problem.add_activity("activity1", duration=4)
+        activity2 = problem.add_activity("activity2", duration=5)
+
+        activity1.add_effect(Timing(5, activity1.start), resource, 2)
+        activity2.uses(resource)
+
+        problem.add_quality_metric(MinimizeMakespan())
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert res.plan.get(activity2.start).constant_value() == (
+            res.plan.get(activity1.start).constant_value() + 5 + 1
+        )
+
+    def test_effect_with_value_expression(self, problem: SchedulingProblem):
+        variable = problem.add_variable(
+            "variable", get_environment().type_manager.IntType()
+        )
+        problem.add_constraint(Equals(variable, 10))
+
+        resource = problem.add_fluent(
+            "resource",
+            get_environment().type_manager.IntType(),
+            default_initial_value=0,
+        )
+        problem.add_constraint(LE(0, resource))
+
+        activity1 = problem.add_activity("activity1", duration=5)
+        activity2 = problem.add_activity("activity2", duration=5)
+
+        problem.add_effect(activity1.end, resource, Times(variable, 2))
+        problem.add_decrease_effect(activity2.start, resource, 20)
+
+        problem.add_constraint(LE(activity2.start, activity1.start))
+        problem.add_constraint(LE(activity1.end, 11))
+        problem.add_constraint(LE(activity2.end, 11))
+
+        self.problem_unsolvable(problem)
 
     def test_condition_with_ClosedTimeInterval(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=10)
@@ -626,3 +753,84 @@ class TestCPSETimepoints(CommonTests):
 
         res = self.problem_solved_satisficing_or_optimally(problem)
         assert res.plan.get(int_var).constant_value() == 4
+
+    def test_int_fluents(self, problem: SchedulingProblem):
+        busy = problem.add_fluent(
+            "busy", get_environment().type_manager.IntType(), default_initial_value=1
+        )
+        problem.set_initial_value(busy, 0)
+
+        activity1 = problem.add_activity("activity1", duration=5)
+        activity1.add_condition(activity1.start, Equals(busy, 0))
+        activity1.add_effect(activity1.start + 1, busy, 1)
+        activity1.add_effect(activity1.end, busy, 0)
+
+        activity2 = problem.add_activity("activity2", duration=5)
+        activity2.add_condition(activity2.start, Equals(busy, 0))
+        activity2.add_effect(activity2.start + 1, busy, 1)
+        activity2.add_effect(activity2.end, busy, 0)
+
+        problem.add_constraint(LE(activity2.end, activity1.start))
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert (
+            res.plan.get(activity2.end).constant_value()
+            <= res.plan.get(activity1.start).constant_value()
+        )
+
+    def test_bool_fluents(self, problem: SchedulingProblem):
+        busy = problem.add_fluent("busy", default_initial_value=True)
+        problem.set_initial_value(busy, False)
+
+        activity1 = problem.add_activity("activity1", duration=5)
+        activity1.add_condition(activity1.start, Not(busy))
+        activity1.add_effect(activity1.start + 1, busy, True)
+        activity1.add_effect(activity1.end, busy, False)
+
+        activity2 = problem.add_activity("activity2", duration=5)
+        activity2.add_condition(activity2.start, Not(busy))
+        activity2.add_effect(activity2.start + 1, busy, True)
+        activity2.add_effect(activity2.end, busy, False)
+
+        problem.add_constraint(LE(activity2.end, activity1.start))
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert (
+            res.plan.get(activity2.end).constant_value()
+            <= res.plan.get(activity1.start).constant_value()
+        )
+
+    def test_set_fluent_non_constant_initial_value(self, problem: SchedulingProblem):
+        variable = problem.add_variable(
+            "variable", get_environment().type_manager.IntType()
+        )
+        problem.add_constraint(Equals(variable, 1))
+
+        resource1 = problem.add_fluent(
+            "resource1",
+            get_environment().type_manager.IntType(lower_bound=-1, upper_bound=11),
+            default_initial_value=variable,
+        )
+        problem.add_constraint(LE(0, resource1))
+
+        resource2 = problem.add_fluent(
+            "resource2",
+            get_environment().type_manager.IntType(),
+        )
+        problem.set_initial_value(resource2, Times(variable, 2))
+        problem.add_constraint(LE(0, resource2))
+
+        activity = problem.add_activity("activity", duration=5)
+        activity.add_decrease_effect(activity.start, resource1, 1)
+        activity.add_decrease_effect(activity.start, resource2, 2)
+        activity.add_constraint(Equals(activity.start, 0))
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_uninitialized_fluent(self, problem: SchedulingProblem):
+        problem.add_fluent(
+            "fluent",
+            get_environment().type_manager.IntType(lower_bound=-1, upper_bound=11),
+        )
+        problem.add_activity("activity", 5)
+        self.problem_solved_satisficing_or_optimally(problem)
