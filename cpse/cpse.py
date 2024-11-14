@@ -42,36 +42,17 @@ credits = Credits(
     "",
 )
 
-# TODO: remove unused keys
-_OPERATOR_MAP = {
-    OperatorKind.AND: None,
-    OperatorKind.OR: None,
-    OperatorKind.NOT: None,
-    OperatorKind.IMPLIES: None,
-    OperatorKind.IFF: None,
-    # OperatorKind.EXISTS: None,
-    # OperatorKind.FORALL: None,
-    # OperatorKind.FLUENT_EXP: None,
-    OperatorKind.PARAM_EXP: None,
-    # OperatorKind.VARIABLE_EXP: None,
-    # OperatorKind.OBJECT_EXP: None,
-    OperatorKind.TIMING_EXP: None,
-    OperatorKind.BOOL_CONSTANT: None,
-    OperatorKind.INT_CONSTANT: None,
-    # OperatorKind.REAL_CONSTANT: None,
+_ARITHMETIC_OPERATOR_MAP = {
     OperatorKind.PLUS: operator.add,
     OperatorKind.MINUS: operator.sub,
     OperatorKind.TIMES: operator.mul,
     OperatorKind.DIV: operator.floordiv,
+}
+
+_BOOL_OPERATOR_MAP = {
     OperatorKind.LE: operator.le,
     OperatorKind.LT: operator.lt,
     OperatorKind.EQUALS: operator.eq,
-    # OperatorKind.ALWAYS: None,
-    # OperatorKind.SOMETIME: None,
-    # OperatorKind.SOMETIME_BEFORE: None,
-    # OperatorKind.SOMETIME_AFTER: None,
-    # OperatorKind.AT_MOST_ONCE: None,
-    # OperatorKind.DOT: None,
 }
 
 activity_type = collections.namedtuple(
@@ -379,27 +360,15 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             ]:
                 results.append(fnode.constant_value())
 
-            elif fnode.node_type in [
-                OperatorKind.PLUS,
-                OperatorKind.MINUS,
-                OperatorKind.TIMES,
-                OperatorKind.DIV,
-            ]:
+            elif fnode.node_type in _ARITHMETIC_OPERATOR_MAP:
                 if not processed:
                     stack.append((fnode, True))
                     for arg in fnode.args:
                         stack.append((arg, False))
                 else:
-                    op = _OPERATOR_MAP[fnode.node_type]
+                    op = _ARITHMETIC_OPERATOR_MAP[fnode.node_type]
                     args = [results.pop() for arg in fnode.args]
                     results.append(op(*args))
-
-            elif fnode.node_type == OperatorKind.NOT:
-                if not processed:
-                    stack.append((fnode, True))
-                    stack.append((fnode.args[0], False))
-                else:
-                    results.append(results.pop().negated())
 
             else:
                 raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
@@ -503,11 +472,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 if cache_enabled:
                     self._variables_cache[repr(fnode)] = bool_var
 
-            elif fnode.node_type in [
-                OperatorKind.LE,
-                OperatorKind.LT,
-                OperatorKind.EQUALS,
-            ]:
+            elif fnode.node_type in _BOOL_OPERATOR_MAP:
                 if not processed:
                     assert len(fnode.args) == 2
                     stack.append((fnode, True))
@@ -516,7 +481,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     continue
 
                 args = [results.pop() for arg in fnode.args]
-                op = _OPERATOR_MAP[fnode.node_type]
+                op = _BOOL_OPERATOR_MAP[fnode.node_type]
                 bool_var = self.new_bool_var()
                 self.model.add(op(args[0], args[1])).only_enforce_if(bool_var)
                 if fnode.node_type == OperatorKind.EQUALS:
