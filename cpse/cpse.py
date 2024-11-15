@@ -711,20 +711,32 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
                 plan = Schedule(problem.activities, assignment, problem.environment)
 
+                if status == cp_model.OPTIMAL:
+                    result_status = PlanGenerationResultStatus.SOLVED_OPTIMALLY
+                else:
+                    result_status = PlanGenerationResultStatus.SOLVED_SATISFICING
+                    if timeout is not None and solver.wall_time > timeout:
+                        result_status = PlanGenerationResultStatus.TIMEOUT
+
                 return PlanGenerationResult(
-                    (
-                        PlanGenerationResultStatus.SOLVED_OPTIMALLY
-                        if status == cp_model.OPTIMAL
-                        else PlanGenerationResultStatus.SOLVED_SATISFICING
-                    ),
+                    result_status,
                     plan,
                     engine_name=self.name,
                     log_messages=None,
                     metrics=metrics,
                 )
             else:
+                if status == cp_model.INFEASIBLE:
+                    result_status = PlanGenerationResultStatus.UNSOLVABLE_PROVEN
+                elif status == cp_model.UNKNOWN:
+                    result_status = PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY
+                    if timeout is not None and solver.wall_time > timeout:
+                        result_status = PlanGenerationResultStatus.TIMEOUT
+                elif status == cp_model.MODEL_INVALID:
+                    raise Exception("The CP-SAT model is incorrectly specified.")
+
                 return PlanGenerationResult(
-                    PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY,
+                    result_status,
                     plan=None,
                     engine_name=self.name,
                     log_messages=None,
@@ -1413,6 +1425,7 @@ class CPSETimepoints(CPSEBaseEngine):
         Returns:
             bool: `True` if a fluent is found within the given `fnode`, otherwise `False`.
         """
+
         stack = [fnode]
         while len(stack) > 0:
             fnode = stack.pop()

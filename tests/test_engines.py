@@ -57,7 +57,10 @@ class CommonTests:
         with OneshotPlanner(name=self.engine_name()) as planner:
             res = planner.solve(problem)
             print(res.log_messages)
-            assert res.status == PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY
+            assert res.status in [
+                PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY,
+                PlanGenerationResultStatus.UNSOLVABLE_PROVEN,
+            ]
             assert res.plan is None
             return res
         raise Exception(f"{self.engine_name()} engine cannot be loaded")
