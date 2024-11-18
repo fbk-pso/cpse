@@ -565,7 +565,7 @@ class TestCPSE(CommonTests):
 
         self.problem_unsupported(problem)
 
-    def test_not_supported_codition_with_fluent_exp(self, problem: SchedulingProblem):
+    def test_not_supported_condition_with_fluent_exp(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=5)
         resource = problem.add_resource("resource", 10)
         problem.add_constraint(LT(1, resource))
@@ -582,6 +582,33 @@ class TestCPSE(CommonTests):
         )
         activity = problem.add_activity("activity", 5)
         problem.add_increase_effect(activity.start, fluent, 1)
+        self.problem_unsupported(problem)
+
+    def test_not_supported_fluent_initial_value_as_fluent_exp(
+        self, problem: SchedulingProblem
+    ):
+        fluent1 = problem.add_fluent(
+            "fluent1",
+            IntType(lower_bound=0),
+            default_initial_value=1,
+        )
+        fluent2 = problem.add_fluent(
+            "fluent2",
+            IntType(lower_bound=0),
+            default_initial_value=Times(fluent1, 2),
+        )
+
+        activity = problem.add_activity("activity", duration=5)
+        activity.add_decrease_effect(activity.start, fluent1, 1)
+        activity.add_decrease_effect(activity.start, fluent2, 2)
+
+        self.problem_unsupported(problem)
+
+    def test_not_supported_user_types_and_objects(self, problem: SchedulingProblem):
+        problem.add_activity("activity", 2)
+        user_type = UserType("user_type")
+        problem.add_object("object", user_type)
+
         self.problem_unsupported(problem)
 
 
@@ -910,17 +937,84 @@ class TestCPSETimepoints(CommonTests):
     def test_set_fluent_initial_value_as_fluent_exp(self, problem: SchedulingProblem):
         fluent1 = problem.add_fluent(
             "fluent1",
-            get_environment().type_manager.IntType(lower_bound=0),
+            IntType(lower_bound=0),
             default_initial_value=1,
         )
         fluent2 = problem.add_fluent(
             "fluent2",
-            get_environment().type_manager.IntType(lower_bound=0),
+            IntType(lower_bound=0),
             default_initial_value=Times(fluent1, 2),
         )
+        user_type = UserType("user_type")
+        fluent3 = problem.add_fluent(
+            "fluent3", IntType(), obj=user_type, default_initial_value=Times(fluent2, 2)
+        )
+        o1 = problem.add_object("o1", user_type)
 
         activity = problem.add_activity("activity", duration=5)
         activity.add_decrease_effect(activity.start, fluent1, 1)
         activity.add_decrease_effect(activity.start, fluent2, 2)
+        activity.add_decrease_effect(activity.start, fluent3(o1), 2)
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_user_types_and_objects(self, problem: SchedulingProblem):
+        fluent1 = problem.add_fluent("fluent1", IntType())
+        fluent2 = problem.add_fluent("fluent2", BoolType())
+        user_type = UserType("user_type")
+        fluent3 = problem.add_fluent(
+            "fluent3",
+            IntType(lower_bound=0, upper_bound=10),
+            obj=user_type,
+            default_initial_value=1,
+        )
+        # parameter1 = problem.add_variable("parameter1", user_type)
+        # fluent1 = Fluent("fluent1", IntType(), _signature=[parameter1])
+        o1 = problem.add_object("o1", user_type)
+        o2 = problem.add_object("o2", user_type)
+
+        activity = problem.add_activity("activity", 2)
+        activity.add_increase_effect(activity.start, fluent1, 1)
+        activity.add_effect(activity.start, fluent2, True)
+        activity.add_effect(activity.end, fluent3(o1), 1)
+        activity.add_decrease_effect(activity.end, fluent3(o2), 1)
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_constraint_with_parametric_fluents(self, problem: SchedulingProblem):
+        user_type = UserType("user_type")
+        fluent = problem.add_fluent(
+            "fluent",
+            IntType(lower_bound=0, upper_bound=10),
+            obj=user_type,
+        )
+        o1 = problem.add_object("o1", user_type)
+        o2 = problem.add_object("o2", user_type)
+
+        activity = problem.add_activity("activity", 2)
+        activity.add_constraint(Equals(fluent(o1), 2))
+        activity.add_constraint(Equals(fluent(o2), 3))
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_condition_with_parametric_fluents(self, problem: SchedulingProblem):
+        user_type = UserType("user_type")
+        fluent = problem.add_fluent(
+            "fluent", IntType(lower_bound=0, upper_bound=10), obj=user_type
+        )
+        o1 = problem.add_object("o1", user_type)
+        o2 = problem.add_object("o2", user_type)
+        # problem.set_initial_value(fluent(o1), 2)
+        # problem.set_initial_value(fluent(o2), 3)
+
+        activity = problem.add_activity("activity", 10)
+        activity.add_condition(
+            ClosedTimeInterval(Timing(0, activity.start), Timing(0, activity.end)),
+            Equals(fluent(o1), 2),
+        )
+        activity.add_condition(
+            ClosedTimeInterval(Timing(0, activity.end), Timing(0, activity.end)),
+            Equals(fluent(o2), 3),
+        )
 
         self.problem_solved_satisficing_or_optimally(problem)
