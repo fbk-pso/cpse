@@ -134,6 +134,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         supported_kind.set_parameters("BOOL_ACTION_PARAMETERS")
         supported_kind.set_parameters("BOUNDED_INT_ACTION_PARAMETERS")
         supported_kind.set_parameters("UNBOUNDED_INT_ACTION_PARAMETERS")
+        supported_kind.set_typing("FLAT_TYPING")
         supported_kind.set_fluents_type("INT_FLUENTS")
         supported_kind.set_quality_metrics("MAKESPAN")
         return supported_kind
@@ -794,10 +795,6 @@ class CPSE(CPSEBaseEngine):
 
         if not problem.discrete_time:
             raise NotImplementedError("Continuous time not supported.")
-        if len(problem.user_types) > 0:
-            raise NotImplementedError("User types not supported.")
-        if len(problem.all_objects) > 0:
-            raise NotImplementedError("Objects not supported.")
 
     def add_constraints(self, problem: SchedulingProblem):
         """
@@ -875,7 +872,6 @@ class CPSE(CPSEBaseEngine):
                 fluent_effects[fluent_exp].append((timing, value, True))
 
         for fluent_exp in fluent_effects:
-            # lb, ub, init_value = self._fluents[fluent_exp]
             lb, ub = self._fluent_bounds[fluent_exp.fluent().name]
             if fluent_exp not in self._fluent_initial_value:
                 raise NotImplementedError(
@@ -1018,7 +1014,6 @@ class CPSETimepoints(CPSEBaseEngine):
         supported_kind.set_initial_state("UNDEFINED_INITIAL_SYMBOLIC")
         supported_kind.set_initial_state("UNDEFINED_INITIAL_NUMERIC")
         supported_kind.set_effects_kind("FLUENTS_IN_NUMERIC_ASSIGNMENTS")
-        supported_kind.set_typing("FLAT_TYPING")
         supported_kind.set_expression_duration("FLUENTS_IN_DURATIONS")
         return supported_kind
 

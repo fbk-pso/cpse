@@ -463,6 +463,23 @@ class CommonTests:
         activity = problem.add_activity("activity", duration=5)
         self.problem_solved_satisficing_or_optimally(problem)
 
+    def test_parametric_fluent(self, problem: SchedulingProblem):
+        user_type = UserType("user_type")
+        fluent = problem.add_fluent(
+            "fluent",
+            IntType(lower_bound=0, upper_bound=10),
+            obj=user_type,
+            default_initial_value=1,
+        )
+        o1 = problem.add_object("o1", user_type)
+        o2 = problem.add_object("o2", user_type)
+
+        activity = problem.add_activity("activity", 2)
+        activity.add_increase_effect(activity.end, fluent(o1), 1)
+        activity.add_decrease_effect(activity.end, fluent(o2), 1)
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
     def test_simple_problem(self, problem: SchedulingProblem):
         machine = problem.add_resource("machine", capacity=1)
 
@@ -517,6 +534,20 @@ class CommonTests:
         problem.add_activity("activity", duration=5)
         problem.add_quality_metric(MinimizeSequentialPlanLength())
         assert not self.engine_class().supports(problem.kind)
+
+    def test_not_supported_fluent_with_parameters(self, problem: SchedulingProblem):
+        user_type = UserType("user_type")
+        o1 = problem.add_object("o1", user_type)
+        o2 = problem.add_object("o2", user_type)
+        parameter = problem.add_variable("parameter", user_type)
+        fluent = problem.add_fluent(
+            "fluent", IntType(), obj=user_type, default_initial_value=0
+        )
+
+        activity = problem.add_activity("activity", 2)
+        activity.add_increase_effect(activity.start, fluent(parameter), 1)
+
+        self.problem_unsupported(problem)
 
 
 class TestCPSE(CommonTests):
@@ -601,13 +632,6 @@ class TestCPSE(CommonTests):
         activity = problem.add_activity("activity", duration=5)
         activity.add_decrease_effect(activity.start, fluent1, 1)
         activity.add_decrease_effect(activity.start, fluent2, 2)
-
-        self.problem_unsupported(problem)
-
-    def test_not_supported_user_types_and_objects(self, problem: SchedulingProblem):
-        problem.add_activity("activity", 2)
-        user_type = UserType("user_type")
-        problem.add_object("object", user_type)
 
         self.problem_unsupported(problem)
 
@@ -955,29 +979,6 @@ class TestCPSETimepoints(CommonTests):
         activity.add_decrease_effect(activity.start, fluent1, 1)
         activity.add_decrease_effect(activity.start, fluent2, 2)
         activity.add_decrease_effect(activity.start, fluent3(o1), 2)
-
-        self.problem_solved_satisficing_or_optimally(problem)
-
-    def test_user_types_and_objects(self, problem: SchedulingProblem):
-        fluent1 = problem.add_fluent("fluent1", IntType())
-        fluent2 = problem.add_fluent("fluent2", BoolType())
-        user_type = UserType("user_type")
-        fluent3 = problem.add_fluent(
-            "fluent3",
-            IntType(lower_bound=0, upper_bound=10),
-            obj=user_type,
-            default_initial_value=1,
-        )
-        # parameter1 = problem.add_variable("parameter1", user_type)
-        # fluent1 = Fluent("fluent1", IntType(), _signature=[parameter1])
-        o1 = problem.add_object("o1", user_type)
-        o2 = problem.add_object("o2", user_type)
-
-        activity = problem.add_activity("activity", 2)
-        activity.add_increase_effect(activity.start, fluent1, 1)
-        activity.add_effect(activity.start, fluent2, True)
-        activity.add_effect(activity.end, fluent3(o1), 1)
-        activity.add_decrease_effect(activity.end, fluent3(o2), 1)
 
         self.problem_solved_satisficing_or_optimally(problem)
 
