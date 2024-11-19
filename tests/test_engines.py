@@ -319,6 +319,21 @@ class CommonTests:
 
         self.problem_solved_satisficing_or_optimally(problem)
 
+    def test_conditional_effects(self, problem: SchedulingProblem):
+        resource = problem.add_resource("resource", capacity=2)
+        problem.set_initial_value(resource, 0)
+
+        activity1 = problem.add_activity("activity1", duration=20)
+        activity2 = problem.add_activity("activity2", duration=20)
+
+        problem.add_increase_effect(
+            activity1.start, resource, 1, condition=LE(10, activity1.start)
+        )
+        problem.add_decrease_effect(activity2.start, resource, 1)
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert res.plan.get(activity1.start).constant_value() >= 10
+
     def test_problem_conditions(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=10)
         bool_var = problem.add_variable(
@@ -464,14 +479,15 @@ class CommonTests:
         self.problem_solved_satisficing_or_optimally(problem)
 
     def test_parametric_fluent(self, problem: SchedulingProblem):
-        user_type = UserType("user_type")
+        user_type_parent = UserType("user_type_parent")
+        user_type = UserType("user_type", user_type_parent)
         fluent = problem.add_fluent(
             "fluent",
             IntType(lower_bound=0, upper_bound=10),
-            obj=user_type,
+            obj=user_type_parent,
             default_initial_value=1,
         )
-        o1 = problem.add_object("o1", user_type)
+        o1 = problem.add_object("o1", user_type_parent)
         o2 = problem.add_object("o2", user_type)
 
         activity = problem.add_activity("activity", 2)
@@ -556,21 +572,6 @@ class TestCPSE(CommonTests):
 
     def engine_class(self):
         return CPSE
-
-    def test_conditional_effects(self, problem: SchedulingProblem):
-        resource = problem.add_resource("resource", capacity=2)
-        problem.set_initial_value(resource, 0)
-
-        activity1 = problem.add_activity("activity1", duration=20)
-        activity2 = problem.add_activity("activity2", duration=20)
-
-        problem.add_increase_effect(
-            activity1.start, resource, 1, condition=LE(10, activity1.start)
-        )
-        problem.add_decrease_effect(activity2.start, resource, 1)
-
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity1.start).constant_value() >= 10
 
     def test_not_supported_assign_effect(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=5)
@@ -771,6 +772,30 @@ class TestCPSETimepoints(CommonTests):
         activity2.uses(resource1, 2)
 
         self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_conditional_effects2(self, problem: SchedulingProblem):
+        resource1 = problem.add_resource("resource1", capacity=2)
+        resource2 = problem.add_resource("resource2", capacity=2)
+        problem.set_initial_value(resource1, 0)
+        problem.set_initial_value(resource2, 0)
+
+        activity1 = problem.add_activity("activity1", duration=20)
+        activity2 = problem.add_activity("activity2", duration=30)
+
+        problem.add_increase_effect(
+            activity1.start, resource1, 1, condition=Equals(activity1.start, 10)
+        )
+        problem.add_decrease_effect(activity2.start, resource1, 1)
+
+        problem.add_effect(
+            activity1.end, resource2, 2, condition=Equals(activity1.end, 30)
+        )
+        problem.add_decrease_effect(activity2.end, resource2, 2)
+
+        problem.add_quality_metric(MinimizeMakespan())
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert res.plan.get(activity1.start).constant_value() == 10
 
     def test_condition_with_ClosedTimeInterval(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=10)
