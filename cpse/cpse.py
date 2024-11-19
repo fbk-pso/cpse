@@ -1372,6 +1372,7 @@ class CPSETimepoints(CPSEBaseEngine):
         condition_vars: Dict[
             Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]
         ],
+        value_var: cp_model.IntVar = None,
     ):
         """
         Adds an effect to the model.
@@ -1405,9 +1406,10 @@ class CPSETimepoints(CPSEBaseEngine):
                 self._model_vars[f_exp] = self.resources[f_exp][i + 1][-1]
 
             resource_var = self.resources[fluent_exp][i + 1][fluent_idx]
-            value_var = self.fnode_to_value_or_variable(effect.value)
-            if effect.is_decrease():
-                value_var = -value_var
+            if value_var is None:
+                value_var = self.fnode_to_value_or_variable(effect.value)
+                if effect.is_decrease():
+                    value_var = -value_var
 
             if fluent_idx == 0:
                 prev_var = self.resources[fluent_exp][i][-1]
@@ -1441,33 +1443,43 @@ class CPSETimepoints(CPSEBaseEngine):
             problem (SchedulingProblem): The scheduling problem
         """
 
-        # TODO: use only 1 variable for non-conditional effects
-
-        # conditional effects:
-        # model value as List[int_var], where len is max num effects at all timepoints on that fluent
-        # for each effect:
-        #   condition => value = prev_value + v
-        #   not condition => value = prev_value
+        # self.resources[fluent_exp] will contain for each timepoint:
+        #   - one int var if there are non-conditional effects on the fluent
+        #   - one int var for each conditional effect on the fluent
 
         self.timepoints_setup(problem)
 
-        fluent_effects = {}
+        fluent_effects: Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]] = {}
         for fluent_exp in self.get_all_fluent_expressions(problem):
             fluent_effects[fluent_exp] = {}
 
         for timing, eff, activity in problem.all_effects():
             if timing not in fluent_effects[eff.fluent]:
-                fluent_effects[eff.fluent][timing] = []
-            fluent_effects[eff.fluent][timing].append(eff)
+                fluent_effects[eff.fluent][timing] = {
+                    "conditional": [],
+                    "non_conditional": [],
+                }
+            if eff.is_conditional():
+                fluent_effects[eff.fluent][timing]["conditional"].append(eff)
+            else:
+                fluent_effects[eff.fluent][timing]["non_conditional"].append(eff)
 
-        max_num_effects = {}
+        max_num_effects: Dict[FNode, int] = {}
         for fluent_exp in fluent_effects:
             max_num_effects[fluent_exp] = 0
             for timing in fluent_effects[fluent_exp]:
                 max_num_effects[fluent_exp] = max(
-                    max_num_effects[fluent_exp], len(fluent_effects[fluent_exp][timing])
+                    max_num_effects[fluent_exp],
+                    (
+                        len(fluent_effects[fluent_exp][timing]["conditional"])
+                        + min(
+                            1,
+                            len(fluent_effects[fluent_exp][timing]["non_conditional"]),
+                        )
+                    ),
                 )
 
+        # create the fluent variables
         for fluent_exp in max_num_effects:
             for i in range(len(self.timepoints)):
                 if max_num_effects[fluent_exp] == 0:
@@ -1482,18 +1494,41 @@ class CPSETimepoints(CPSEBaseEngine):
         ] = {}
         for fluent_exp in fluent_effects:
             for timing in fluent_effects[fluent_exp]:
-                for idx, eff in enumerate(fluent_effects[fluent_exp][timing]):
-                    self.add_effect(timing, eff, idx, condition_vars)
+                sum_inc_dec_effects = 0
+                idx = 0
+                for eff in fluent_effects[fluent_exp][timing]["non_conditional"]:
+                    if eff.is_assignment():
+                        assert (
+                            len(fluent_effects[fluent_exp][timing]["non_conditional"])
+                            == 1
+                        )
+                        self.add_effect(timing, eff, idx, condition_vars)
+                        continue
 
-                # propagate the values of remaining variables when the number of effects
+                    # sum values of different effects that occur at the same timepoint
+                    value_var = self.fnode_to_value_or_variable(eff.value)
+                    if eff.is_increase():
+                        sum_inc_dec_effects += value_var
+                    else:
+                        sum_inc_dec_effects -= value_var
+
+                if sum_inc_dec_effects != 0:
+                    self.add_effect(
+                        timing, eff, idx, condition_vars, value_var=sum_inc_dec_effects
+                    )
+
+                idx = min(1, len(fluent_effects[fluent_exp][timing]["non_conditional"]))
+                for eff in fluent_effects[fluent_exp][timing]["conditional"]:
+                    self.add_effect(timing, eff, idx, condition_vars)
+                    idx += 1
+
+                # propagate the value to the last variable when the number of effects
                 # is less than the maximum one
-                for idx in range(
-                    len(fluent_effects[fluent_exp][timing]), max_num_effects[fluent_exp]
-                ):
+                if idx < max_num_effects[fluent_exp]:
                     for i, bool_var in enumerate(
                         self.assignment_matrix[(timing.timepoint, timing.delay)]
                     ):
-                        resource_var = self.resources[fluent_exp][i + 1][idx]
+                        resource_var = self.resources[fluent_exp][i + 1][-1]
                         if idx == 0:
                             prev_var = self.resources[fluent_exp][i][-1]
                         else:
