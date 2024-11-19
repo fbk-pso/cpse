@@ -131,10 +131,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         supported_kind.set_conditions_kind("EQUALITIES")
         supported_kind.set_effects_kind("INCREASE_EFFECTS")
         supported_kind.set_effects_kind("DECREASE_EFFECTS")
+        supported_kind.set_effects_kind("CONDITIONAL_EFFECTS")
         supported_kind.set_parameters("BOOL_ACTION_PARAMETERS")
         supported_kind.set_parameters("BOUNDED_INT_ACTION_PARAMETERS")
         supported_kind.set_parameters("UNBOUNDED_INT_ACTION_PARAMETERS")
         supported_kind.set_typing("FLAT_TYPING")
+        supported_kind.set_typing("HIERARCHICAL_TYPING")
         supported_kind.set_fluents_type("INT_FLUENTS")
         supported_kind.set_quality_metrics("MAKESPAN")
         return supported_kind
@@ -768,12 +770,6 @@ class CPSE(CPSEBaseEngine):
         return "CPSE"
 
     @staticmethod
-    def supported_kind() -> ProblemKind:
-        supported_kind = CPSEBaseEngine.supported_kind()
-        supported_kind.set_effects_kind("CONDITIONAL_EFFECTS")
-        return supported_kind
-
-    @staticmethod
     def supports(problem_kind: ProblemKind) -> bool:
         return problem_kind <= CPSE.supported_kind()
 
@@ -1002,7 +998,7 @@ class CPSETimepoints(CPSEBaseEngine):
         self.assignment_matrix: Dict[
             Tuple[timing.Timepoint, int], List[cp_model.IntVar]
         ] = {}
-        self.resources: Dict[FNode, List[cp_model.IntVar]] = {}
+        self.resources: Dict[FNode, List[List[cp_model.IntVar]]] = {}
 
     @property
     def name(self) -> str:
@@ -1097,7 +1093,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 # FixedDuration
                 def constrain_duration():
                     for fluent_exp in self.resources:
-                        self._model_vars[fluent_exp] = self.resources[fluent_exp][0]
+                        self._model_vars[fluent_exp] = self.resources[fluent_exp][0][0]
                     duration_exp = self.fnode_to_value_or_variable(upper)
                     self.model.add(duration_var == duration_exp)
 
@@ -1106,7 +1102,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 # ClosedDurationInterval
                 def constrain_start_end():
                     for fluent_exp in self.resources:
-                        self._model_vars[fluent_exp] = self.resources[fluent_exp][0]
+                        self._model_vars[fluent_exp] = self.resources[fluent_exp][0][0]
                     lower_exp = self.fnode_to_value_or_variable(lower)
                     self.model.add(start_var == lower_exp)
                     upper_exp = self.fnode_to_value_or_variable(upper)
@@ -1195,6 +1191,15 @@ class CPSETimepoints(CPSEBaseEngine):
             for fluent_exp in get_all_fluent_exp(problem, fluent):
                 yield fluent_exp
 
+    def _new_resource_var(self, fluent_exp: FNode, tp_idx: int) -> cp_model.IntVar:
+        self._int_var_counter += 1
+        lb, ub = self._fluent_bounds[fluent_exp.fluent().name]
+        resource_var = self.model.new_int_var(
+            lb, ub, f"{fluent_exp}@{self.timepoints[tp_idx]}_{self._int_var_counter}"
+        )
+        self.resources[fluent_exp][tp_idx + 1].append(resource_var)
+        return resource_var
+
     def timepoints_setup(self, problem: SchedulingProblem):
         """
         Defines the constraints that links each activity timepoint (start or end)
@@ -1240,15 +1245,12 @@ class CPSETimepoints(CPSEBaseEngine):
         for fluent_exp in self.get_all_fluent_expressions(problem):
             lb, ub = self._fluent_bounds[fluent_exp.fluent().name]
             init_value_var = self.model.new_int_var(lb, ub, f"{fluent_exp}_init_value")
-            self.resources[fluent_exp] = [init_value_var]
+            self.resources[fluent_exp] = [[init_value_var]]
             for i in range(len(self.timepoints)):
-                resource_var = self.model.new_int_var(
-                    lb, ub, f"{fluent_exp}@{self.timepoints[i]}"
-                )
-                self.resources[fluent_exp].append(resource_var)
+                self.resources[fluent_exp].append([])
 
         for fluent_exp in self.resources:
-            self._model_vars[fluent_exp] = self.resources[fluent_exp][0]
+            self._model_vars[fluent_exp] = self.resources[fluent_exp][0][0]
 
         for fluent_exp in self.resources:
             if fluent_exp not in self._fluent_initial_value:
@@ -1257,7 +1259,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
             init_value = self._fluent_initial_value[fluent_exp]
             value_var = self.fnode_to_value_or_variable(init_value)
-            self.model.add(self.resources[fluent_exp][0] == value_var)
+            self.model.add(self.resources[fluent_exp][0][0] == value_var)
 
     def add_constraints(self, problem: SchedulingProblem):
         """
@@ -1282,7 +1284,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 # for each timepoint, add a constraint defined on the fluents at that timepoint
                 for i in range(len(self.timepoints) + 1):
                     for fluent_exp in self.resources:
-                        self._model_vars[fluent_exp] = self.resources[fluent_exp][i]
+                        self._model_vars[fluent_exp] = self.resources[fluent_exp][i][-1]
                     bool_var = self.add_constraint(fnode, cache_enabled=False)
                     self.model.add_bool_and([bool_var])
 
@@ -1317,13 +1319,22 @@ class CPSETimepoints(CPSEBaseEngine):
 
         return activity_effects + problem_effects
 
-    def add_assign_effect_constraints(self, problem: SchedulingProblem):
+    def add_assign_effect_constraints(
+        self,
+        problem: SchedulingProblem,
+        condition_vars: Dict[
+            Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]
+        ],
+    ):
         """
         Adds constraints to ensure that assignment effects do not occur simultaneously
         with any other effect on the same fluent.
 
         Args:
             problem (SchedulingProblem): The scheduling problem.
+            condition_vars (Dict[Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]]):
+                A mapping of effects to their associated condition variables, used to enforce
+                conditional effects.
         """
 
         visited_timepoints = set()
@@ -1338,20 +1349,29 @@ class CPSETimepoints(CPSEBaseEngine):
                     if t1 == t2 or (str(t1), str(t2)) in visited_timepoints:
                         continue
 
-                    visited_timepoints.add((str(t1), str(t2)))
-                    visited_timepoints.add((str(t2), str(t1)))
+                    if e1.is_conditional():
+                        self.model.add(
+                            (self._model_vars[t1.timepoint] + t1.delay)
+                            != (self._model_vars[t2.timepoint] + t2.delay)
+                        ).only_enforce_if(condition_vars[e1])
 
-                    self.model.add(
-                        self._model_vars[t1.timepoint] + t1.delay
-                        != self._model_vars[t2.timepoint] + t2.delay
-                    )
+                    else:
+                        visited_timepoints.add((str(t1), str(t2)))
+                        visited_timepoints.add((str(t2), str(t1)))
+
+                        self.model.add(
+                            (self._model_vars[t1.timepoint] + t1.delay)
+                            != (self._model_vars[t2.timepoint] + t2.delay)
+                        )
 
     def add_effect(
         self,
         timing: timing.Timing,
-        fluent_exp: FNode,
-        value: FNode,
-        is_assignment: bool,
+        effect: Effect,
+        fluent_idx: int,
+        condition_vars: Dict[
+            Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]
+        ],
     ):
         """
         Adds an effect to the model.
@@ -1363,41 +1383,54 @@ class CPSETimepoints(CPSEBaseEngine):
 
         Args:
             timing (timing.Timing): The specific timing at which the effect is applied.
-            fluent_exp (FNode): The fluent expression to which the effect is applied.
-            value (FNode): The value associated with the effect, represented as a `FNode`.
-                This may represent the sum of increase/decrease effects or the exact value of the effect.
-            is_assignment (bool): If True, the effect is an assignment; otherwise, it's an increase/decrease effect.
+            effect (Effect): The effect to be applied.
+            fluent_idx (int): An index identifying fluent variable to be updated.
+            condition_vars (Dict[Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]]):
+                A mapping of effects to their associated condition variables, used to enforce
+                conditional effects.
         """
 
+        if effect.is_conditional():
+            # TODO: effect conditions can use fluents ?
+            if self._fnode_contains_fluents(effect.condition):
+                raise NotImplementedError("Effect conditions must not include fluents.")
+            condition_var = self.add_constraint(effect.condition)
+            condition_vars[effect] = condition_var
+
+        fluent_exp = effect.fluent
         for i, bool_var in enumerate(
             self.assignment_matrix[(timing.timepoint, timing.delay)]
         ):
             for f_exp in self.resources:
-                self._model_vars[f_exp] = self.resources[f_exp][i + 1]
+                self._model_vars[f_exp] = self.resources[f_exp][i + 1][-1]
 
-            if is_assignment:
-                if fluent_exp.fluent().type.is_bool_type():
-                    constraint_var = self.add_constraint(
-                        Iff(fluent_exp, value), cache_enabled=False
-                    )
-                elif fluent_exp.fluent().type.is_int_type():
-                    constraint_var = self.add_constraint(
-                        Equals(fluent_exp, value), cache_enabled=False
-                    )
-                else:
-                    raise NotImplementedError(
-                        f"Fluent type {fluent_exp.fluent().type} not supported."
-                    )
+            resource_var = self.resources[fluent_exp][i + 1][fluent_idx]
+            value_var = self.fnode_to_value_or_variable(effect.value)
+            if effect.is_decrease():
+                value_var = -value_var
 
-                self.model.add_implication(bool_var, constraint_var)
+            if fluent_idx == 0:
+                prev_var = self.resources[fluent_exp][i][-1]
+            else:
+                prev_var = self.resources[fluent_exp][i + 1][fluent_idx - 1]
+
+            if effect.is_assignment():
+                resource_equality = resource_var == value_var
+            else:
+                resource_equality = resource_var == (prev_var + value_var)
+
+            if effect.is_conditional():
+                self.model.add(resource_equality).only_enforce_if(
+                    [bool_var, condition_var]
+                )
+                self.model.add(resource_var == prev_var).only_enforce_if(
+                    [bool_var, condition_var.negated()]
+                )
 
             else:
-                assert fluent_exp.fluent().type.is_int_type()
-                var = self.fnode_to_value_or_variable(value)
-                self.model.add(
-                    self.resources[fluent_exp][i + 1]
-                    == (self.resources[fluent_exp][i] + var)
-                ).only_enforce_if(bool_var)
+                self.model.add(resource_equality).only_enforce_if(bool_var)
+
+        return condition_vars
 
     def add_effects(self, problem: SchedulingProblem):
         """
@@ -1408,48 +1441,67 @@ class CPSETimepoints(CPSEBaseEngine):
             problem (SchedulingProblem): The scheduling problem
         """
 
-        # TODO: model conditional effects
+        # TODO: use only 1 variable for non-conditional effects
+
         # conditional effects:
-        # model value as List[int_var], where len is num effects at that timepoint on that fluent
+        # model value as List[int_var], where len is max num effects at all timepoints on that fluent
         # for each effect:
         #   condition => value = prev_value + v
         #   not condition => value = prev_value
 
         self.timepoints_setup(problem)
 
-        activities_effects = [
-            (timing, eff)
-            for act in problem.activities
-            for timing, effects in act.effects.items()
-            for eff in effects
-        ]
+        fluent_effects = {}
+        for fluent_exp in self.get_all_fluent_expressions(problem):
+            fluent_effects[fluent_exp] = {}
 
-        # sum values of different effects that occur at the same timepoint
-        fluent_inc_dec_effects: Dict[FNode, Dict["timing.Timing", FNode]] = {}
-        for timing, eff in activities_effects + problem.base_effects:
-            eff: Effect
-            fluent_exp = eff.fluent
+        for timing, eff, activity in problem.all_effects():
+            if timing not in fluent_effects[eff.fluent]:
+                fluent_effects[eff.fluent][timing] = []
+            fluent_effects[eff.fluent][timing].append(eff)
 
-            if eff.is_assignment():
-                self.add_effect(timing, fluent_exp, eff.value, True)
-                continue
+        max_num_effects = {}
+        for fluent_exp in fluent_effects:
+            max_num_effects[fluent_exp] = 0
+            for timing in fluent_effects[fluent_exp]:
+                max_num_effects[fluent_exp] = max(
+                    max_num_effects[fluent_exp], len(fluent_effects[fluent_exp][timing])
+                )
 
-            if fluent_exp not in fluent_inc_dec_effects:
-                fluent_inc_dec_effects[fluent_exp] = {}
+        for fluent_exp in max_num_effects:
+            for i in range(len(self.timepoints)):
+                if max_num_effects[fluent_exp] == 0:
+                    # no effects
+                    self._new_resource_var(fluent_exp, i)
 
-            if timing not in fluent_inc_dec_effects[fluent_exp]:
-                fluent_inc_dec_effects[fluent_exp][timing] = 0
+                for _ in range(max_num_effects[fluent_exp]):
+                    self._new_resource_var(fluent_exp, i)
 
-            # sum values of different effects that occur at the same timepoint
-            if eff.is_increase():
-                value = Plus(fluent_inc_dec_effects[fluent_exp][timing], eff.value)
-            else:
-                value = Minus(fluent_inc_dec_effects[fluent_exp][timing], eff.value)
-            fluent_inc_dec_effects[fluent_exp][timing] = value
+        condition_vars: Dict[
+            Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]
+        ] = {}
+        for fluent_exp in fluent_effects:
+            for timing in fluent_effects[fluent_exp]:
+                for idx, eff in enumerate(fluent_effects[fluent_exp][timing]):
+                    self.add_effect(timing, eff, idx, condition_vars)
 
-        for fluent_exp in fluent_inc_dec_effects:
-            for timing, value in fluent_inc_dec_effects[fluent_exp].items():
-                self.add_effect(timing, fluent_exp, value, False)
+                # propagate the values of remaining variables when the number of effects
+                # is less than the maximum one
+                for idx in range(
+                    len(fluent_effects[fluent_exp][timing]), max_num_effects[fluent_exp]
+                ):
+                    for i, bool_var in enumerate(
+                        self.assignment_matrix[(timing.timepoint, timing.delay)]
+                    ):
+                        resource_var = self.resources[fluent_exp][i + 1][idx]
+                        if idx == 0:
+                            prev_var = self.resources[fluent_exp][i][-1]
+                        else:
+                            prev_var = self.resources[fluent_exp][i + 1][idx - 1]
+
+                        self.model.add(resource_var == prev_var).only_enforce_if(
+                            bool_var
+                        )
 
         # for each resource
         #   for each timepoint
@@ -1468,13 +1520,16 @@ class CPSETimepoints(CPSEBaseEngine):
                     )
                 )
                 bool_var = self.new_bool_var()
-                self.model.add(
-                    self.resources[fluent_exp][i + 1] == self.resources[fluent_exp][i]
-                ).only_enforce_if(bool_var)
+                prev_resource_value = self.resources[fluent_exp][i][-1]
+                for resource_value in self.resources[fluent_exp][i + 1]:
+                    self.model.add(
+                        resource_value == prev_resource_value
+                    ).only_enforce_if(bool_var)
+                    prev_resource_value = resource_value
                 # not(assignment_vars[0] or ... or assignment_vars[-1]) => bool_var
                 self.model.add_bool_or(assignment_vars + [bool_var])
 
-        self.add_assign_effect_constraints(problem)
+        self.add_assign_effect_constraints(problem, condition_vars)
 
     def _fnode_contains_fluents(self, fnode: FNode) -> bool:
         """
@@ -1536,7 +1591,7 @@ class CPSETimepoints(CPSEBaseEngine):
         #   (start <= timepoint <= end) => constraint
         for i in range(len(self.timepoints)):
             for fluent_exp in self.resources:
-                self._model_vars[fluent_exp] = self.resources[fluent_exp][i + 1]
+                self._model_vars[fluent_exp] = self.resources[fluent_exp][i + 1][-1]
 
             constraint_var = self.add_constraint(fnode, cache_enabled=False)
 
