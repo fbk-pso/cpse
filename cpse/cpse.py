@@ -7,6 +7,7 @@ import operator
 import warnings
 import traceback
 import functools
+import itertools
 
 import unified_planning as up
 from unified_planning.engines import (
@@ -23,12 +24,13 @@ from unified_planning.model import (
     ProblemKind,
     Effect,
     Fluent,
+    Object,
 )
 from unified_planning.model.scheduling import SchedulingProblem, Activity
 from unified_planning.model.metrics import MinimizeMakespan
 from unified_planning.plans import Schedule
-from unified_planning.shortcuts import Equals, Iff, Plus, Minus
-from unified_planning.model.fluent import get_all_fluent_exp
+from unified_planning.shortcuts import Plus, Minus
+from unified_planning.model.types import Type, is_compatible_type
 
 from ortools.sat.python import cp_model
 
@@ -93,6 +95,11 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self._fluent_bounds: Dict[str, Tuple[int, int]] = {}
         # mapping fluent expression to its initial value expression
         self._fluent_initial_value: Dict[FNode, FNode] = {}
+        # mapping objects to their types and assigns a unique integer value
+        self.objects: Dict[Type, Dict[Object, int]] = {}
+        self._type_objects_mapping: Dict[Type, List[Object]] = {}
+        self._type_params_mapping: Dict[Type, List[Parameter]] = {}
+
         # constraints to be applied just before solving the problem
         self._postponed_constraints: List[Callable] = []
 
@@ -148,7 +155,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         Checks if the given problem is a supported instance of `SchedulingProblem`.
         Raises `NotImplementedError` if unsupported.
 
-        Parameters:
+        Args:
             problem (up.model.AbstractProblem): The problem instance to validate.
 
         Raises:
@@ -186,8 +193,11 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         """
         Checks if the specified FNode contains any fluent.
 
+        Args:
+            fnode (FNode): The FNode to analyze.
+
         Returns:
-            bool: `True` if a fluent is found within the given `fnode`, otherwise `False`.
+            bool: True if a fluent is found within the given `fnode`, otherwise False.
         """
 
         stack = [fnode]
@@ -201,6 +211,19 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     stack.append(arg)
 
         return False
+
+    def _fluent_exp_contains_parameters(self, fluent_exp: FNode) -> bool:
+        """
+        Checks if the specified fluent expression contains any parameter.
+
+        Args:
+            fluent_exp (FNode): The fluent expression to analyze.
+
+        Returns:
+            bool: True if the fluent expression contains parameters, otherwise False.
+        """
+
+        return any(arg.is_parameter_exp() for arg in fluent_exp.args)
 
     def _convert_timing_to_linear_expr(self, t: timing.Timing) -> cp_model.LinearExprT:
         """
@@ -269,8 +292,27 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         for fluent_exp, initial_value in problem.initial_values.items():
             assert fluent_exp.is_fluent_exp()
             if initial_value.is_int_constant():
+                lower_bound, upper_bound = self._fluent_bounds[fluent_exp.fluent().name]
                 assert lower_bound <= initial_value.int_constant_value() <= upper_bound
             self._fluent_initial_value[fluent_exp] = initial_value
+
+    def process_objects(self, problem: SchedulingProblem):
+        """
+        Maps objects in the scheduling problem to their respective types and assigns
+        each a unique integer value.
+
+        Args:
+            problem (SchedulingProblem): The scheduling problem containing the objects.
+        """
+
+        for type in problem.user_types:
+            self.objects[type] = {}
+            self._type_objects_mapping[type] = []
+        for obj in problem.all_objects:
+            if not obj.type.is_user_type():
+                continue
+            self.objects[obj.type][obj] = len(self.objects[obj.type])
+            self._type_objects_mapping[obj.type].append(obj)
 
     def add_parameters(self, problem: SchedulingProblem):
         """
@@ -280,6 +322,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             problem (SchedulingProblem): The scheduling problem containing the
                 parameters to be added to the model.
         """
+
+        for type in problem.user_types:
+            self._type_params_mapping[type] = []
 
         activity_parameters = []
         for activity in problem.activities:
@@ -300,6 +345,11 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     else param.type.upper_bound
                 )
                 var = self.model.new_int_var(lb, ub, param.name)
+            elif param.type.is_user_type():
+                lb = 0
+                ub = len(list(problem.objects(param.type))) - 1
+                var = self.model.new_int_var(lb, ub, param.name)
+                self._type_params_mapping[param.type].append(param)
             else:
                 raise NotImplementedError(f"Parameter type {param.type} not supported.")
 
@@ -422,6 +472,10 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             if fnode.is_parameter_exp():
                 results.append(self._model_vars[fnode.parameter()])
 
+            elif fnode.is_object_exp():
+                obj = fnode.object()
+                results.append(self.objects[obj.type][obj])
+
             elif fnode.is_timing_exp():
                 results.append(self._convert_timing_to_linear_expr(fnode.timing()))
 
@@ -492,6 +546,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             elif fnode.node_type in [
                 OperatorKind.PARAM_EXP,
+                OperatorKind.OBJECT_EXP,
                 OperatorKind.TIMING_EXP,
                 OperatorKind.FLUENT_EXP,
                 OperatorKind.BOOL_CONSTANT,
@@ -664,7 +719,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             self.model.name = problem.name
 
+            self.process_objects(problem)
             self.process_fluents(problem)
+
             # add problem-specific and activity-related parameters to the model
             self.add_parameters(problem)
 
@@ -805,7 +862,7 @@ class CPSE(CPSEBaseEngine):
         Checks if the given problem is a supported instance of `SchedulingProblem`.
         Raises `NotImplementedError` if unsupported.
 
-        Parameters:
+        Args:
             problem (up.model.AbstractProblem): The problem instance to validate.
 
         Raises:
@@ -820,6 +877,10 @@ class CPSE(CPSEBaseEngine):
 
         if not problem.discrete_time:
             raise NotImplementedError("Continuous time not supported.")
+
+        for timing, eff, activity in problem.all_effects():
+            if self._fluent_exp_contains_parameters(eff.fluent):
+                raise NotImplementedError("Fluents with parameters are not supported.")
 
     def add_constraints(self, problem: SchedulingProblem):
         """
@@ -854,18 +915,11 @@ class CPSE(CPSEBaseEngine):
                 effects to be applied to the model.
         """
 
-        activities_effects = [
-            (timing, eff)
-            for act in problem.activities
-            for timing, effects in act.effects.items()
-            for eff in effects
-        ]
-
         # map each fluent to its effects, adjusting values based on increase/decrease effect types
         fluent_effects: Dict[
             FNode, List[Tuple["timing.Timing", int, cp_model.IntVar]]
         ] = {}
-        for timing, eff in activities_effects + problem.base_effects:
+        for timing, eff, activity in problem.all_effects():
             eff: Effect
             fluent_exp = eff.fluent
 
@@ -900,7 +954,7 @@ class CPSE(CPSEBaseEngine):
             lb, ub = self._fluent_bounds[fluent_exp.fluent().name]
             if fluent_exp not in self._fluent_initial_value:
                 raise NotImplementedError(
-                    f"The fluent '{fluent_exp}' must be initialized with a constant value of type integer or boolean."
+                    f"Fluent '{fluent_exp}' must be initialized with a constant value of type integer or boolean."
                 )
             init_value = self._fluent_initial_value[fluent_exp]
             if init_value.is_int_constant():
@@ -1051,7 +1105,7 @@ class CPSETimepoints(CPSEBaseEngine):
         Checks if the given problem is a supported instance of `SchedulingProblem`.
         Raises `NotImplementedError` if unsupported.
 
-        Parameters:
+        Args:
             problem (up.model.AbstractProblem): The problem instance to validate.
 
         Raises:
@@ -1205,6 +1259,40 @@ class CPSETimepoints(CPSEBaseEngine):
 
         return list(problem_timings)
 
+    def _get_compatible_objects(self, type: Type) -> List[Object]:
+        """
+        Retrieves a list of objects that are compatible with the specified type.
+
+        Args:
+            type (Type): The type against which compatibility of objects is checked.
+
+        Returns:
+            List[Object]: A list of `Object` instances that are compatible with the given `type`.
+        """
+
+        objects = []
+        for other_type in self._type_objects_mapping:
+            if is_compatible_type(type, other_type):
+                objects += self._type_objects_mapping[other_type]
+        return objects
+
+    def _get_compatible_parameters(self, type: Type) -> List[Parameter]:
+        """
+        Retrieves a list of parameters that are compatible with the specified type.
+
+        Args:
+            type (Type): The type against which compatibility of parameters is checked.
+
+        Returns:
+            List[Parameter]: A list of `Parameter` instances that are compatible with the given `type`.
+        """
+
+        parameters = []
+        for other_type in self._type_params_mapping:
+            if is_compatible_type(type, other_type):
+                parameters += self._type_params_mapping[other_type]
+        return parameters
+
     def get_all_fluent_expressions(self, problem: SchedulingProblem) -> Iterable[FNode]:
         """
         Retrieves all fluent expressions from the given scheduling problem.
@@ -1217,10 +1305,36 @@ class CPSETimepoints(CPSEBaseEngine):
         """
 
         for fluent in problem.fluents:
-            for fluent_exp in get_all_fluent_exp(problem, fluent):
-                yield fluent_exp
+            if fluent.arity == 0:
+                yield fluent()
+                continue
+
+            domains = []
+            for arg in fluent.signature:
+                domains.append(
+                    self._get_compatible_objects(arg.type)
+                    + self._get_compatible_parameters(arg.type)
+                )
+
+            for args in itertools.product(*domains):
+                yield fluent(*args)
 
     def _new_resource_var(self, fluent_exp: FNode, tp_idx: int) -> cp_model.IntVar:
+        """
+        Creates a new variable representing the value of a resource (fluent)
+        at a specific timepoint.
+
+        Args:
+            fluent_exp (FNode): The fluent expression representing the resource.
+            tp_idx (int): The timepoint index for which the variable is created.
+                Must satisfy `-1 <= tp_idx < len(self.timepoints)`.
+
+        Returns:
+            cp_model.IntVar: A model variable representing the resource value at
+                the specified timepoint.
+        """
+
+        assert -1 <= tp_idx < len(self.timepoints)
         self._int_var_counter += 1
         lb, ub = self._fluent_bounds[fluent_exp.fluent().name]
         resource_var = self.model.new_int_var(
@@ -1333,6 +1447,87 @@ class CPSETimepoints(CPSEBaseEngine):
                     bool_var = self.add_constraint(fnode)
                     self.model.add_bool_and([bool_var])
 
+    def add_parametric_fluents_constraints(
+        self,
+    ) -> Dict[FNode, Dict[FNode, cp_model.IntVar]]:
+        """
+        Adds constraints to map a fluent with parameters to a ground fluent without parameters.
+
+        Returns:
+            Dict[FNode, Dict[FNode, cp_model.IntVar]]: A nested dictionary where:
+                - Keys are fluent expressions with parameters (`FNode`).
+                - Values are dictionaries mapping fluent expressions without parameters
+                (`FNode`) to a `cp_model.IntVar` boolean variable. This variable
+                indicates whether the fluent expression without parameters corresponds
+                to the parameterized fluent expression.
+        """
+
+        def fluent_exp_params(fluent_exp: FNode) -> List[Tuple[int, Parameter]]:
+            params = []
+            for i, arg in enumerate(fluent_exp.args):
+                if arg.is_parameter_exp():
+                    params.append((i, arg.parameter()))
+            return params
+
+        # For each fluent with parameters, derive all the ground fluents and enforce equality
+        # when the parameters are equal to the ground objects.
+
+        parametric_fluent_assignments: Dict[FNode, Dict[FNode, cp_model.IntVar]] = {}
+        params_assignments_cache: Dict[Tuple[Parameter, Object], cp_model.IntVar] = {}
+        for fluent_exp in self.resources:
+            params = fluent_exp_params(fluent_exp)
+            if len(params) == 0:
+                continue
+
+            arg_domains = []
+            for i, param in params:
+                arg_domains.append(self.objects[param.type].keys())
+
+            parametric_fluent_assignments[fluent_exp] = {}
+            for objs in itertools.product(*arg_domains):
+                assigned_objs = [None] * len(fluent_exp.args)
+                params_assignments = []
+                for (i, param), obj in zip(params, objs):
+                    assigned_objs[i] = obj
+                    if (param, obj) in params_assignments_cache:
+                        bool_var = params_assignments_cache[(param, obj)]
+                    else:
+                        bool_var = self.new_bool_var()
+                        params_assignments_cache[(param, obj)] = bool_var
+                        # enforce (parameter == ground object)
+                        self.model.add(
+                            self._model_vars[param] == self.objects[obj.type][obj]
+                        ).only_enforce_if(bool_var)
+                    params_assignments.append(bool_var)
+
+                for i, arg in enumerate(fluent_exp.args):
+                    if not arg.is_parameter_exp():
+                        assert arg.is_object_exp()
+                        assigned_objs[i] = arg.object()
+
+                ground_fluent_exp = fluent_exp.fluent()(*assigned_objs)
+                bool_var = self.new_bool_var()
+                parametric_fluent_assignments[fluent_exp][ground_fluent_exp] = bool_var
+                # (fluent_exp == ground_fluent_exp) => (params == ground objects)
+                self.model.add_bool_and(params_assignments).only_enforce_if(bool_var)
+
+                # enforce equality between resource variables
+                for i in range(len(self.timepoints) + 1):
+                    self.model.add(
+                        self.resources[fluent_exp][i][-1]
+                        == self.resources[ground_fluent_exp][i][-1]
+                    ).only_enforce_if(bool_var)
+
+            assert (
+                len(parametric_fluent_assignments[fluent_exp]) > 0
+            ), "At least one object must exist for each user-defined type."
+            # each fluent expression with parameters is equal to exactly one ground fluent expression
+            self.model.add_exactly_one(
+                list(parametric_fluent_assignments[fluent_exp].values())
+            )
+
+        return parametric_fluent_assignments
+
     def _filter_fluent_effects(
         self, problem: SchedulingProblem, fluent_exp: FNode
     ) -> List[Tuple[timing.Timing, Effect]]:
@@ -1364,7 +1559,11 @@ class CPSETimepoints(CPSEBaseEngine):
 
         return activity_effects + problem_effects
 
-    def add_no_effect_constraints(self, problem: SchedulingProblem):
+    def add_no_effect_constraints(
+        self,
+        problem: SchedulingProblem,
+        parametric_fluent_assignments: Dict[FNode, Dict[FNode, cp_model.IntVar]],
+    ):
         """
         Adds constraints to ensure that fluent values remain unchanged
         if no effects are applied at a given timepoint.
@@ -1374,6 +1573,9 @@ class CPSETimepoints(CPSEBaseEngine):
 
         Args:
             problem (SchedulingProblem): The scheduling problem.
+            parametric_fluent_assignments (Dict[FNode, Dict[FNode, cp_model.IntVar]]):
+                A nested dictionary mapping parametric fluents to ground fluents. Each mapping
+                is associated with a `cp_model.IntVar` variable that represents the assignment.
         """
 
         # for each resource
@@ -1381,27 +1583,69 @@ class CPSETimepoints(CPSEBaseEngine):
         #       if no effects are applied on the resource at the timepoint
         #           resource@tp(i) == resource@tp(i-1)
 
-        for fluent_exp in self.resources:
+        def fluents_with_max_parameters():
+            for fluent in problem.fluents:
+                if fluent.arity == 0:
+                    yield fluent()
+                    continue
+
+                domains = []
+                for arg in fluent.signature:
+                    compatible_params = self._get_compatible_parameters(arg.type)
+                    if len(compatible_params) > 0:
+                        domains.append(compatible_params)
+                    else:
+                        domains.append(self._get_compatible_objects(arg.type))
+
+                for args in itertools.product(*domains):
+                    yield fluent(*args)
+
+        def ground_and_parametric_fluent_effects(fluent_exp):
             fluent_effects = self._filter_fluent_effects(problem, fluent_exp)
-            # TODO: if fluent_effects is empty, bool_var can be avoided
-            for i, tp in enumerate(self.timepoints):
-                assignment_vars = list(
-                    map(
-                        lambda t_eff: self.assignment_matrix[
-                            (t_eff[0].timepoint, t_eff[0].delay)
-                        ][i],
-                        fluent_effects,
+            if fluent_exp not in parametric_fluent_assignments:
+                # fluent without parameters
+                yield fluent_effects, None
+            else:
+                for ground_fluent_exp in parametric_fluent_assignments[fluent_exp]:
+                    ground_fluent_effects = self._filter_fluent_effects(
+                        problem, ground_fluent_exp
                     )
-                )
-                bool_var = self.new_bool_var()
-                prev_resource_value = self.resources[fluent_exp][i][-1]
-                for resource_value in self.resources[fluent_exp][i + 1]:
-                    self.model.add(
-                        resource_value == prev_resource_value
-                    ).only_enforce_if(bool_var)
-                    prev_resource_value = resource_value
-                # not(assignment_vars[0] or ... or assignment_vars[-1]) => bool_var
-                self.model.add_bool_or(assignment_vars + [bool_var])
+                    fluent_assignment_var = parametric_fluent_assignments[fluent_exp][
+                        ground_fluent_exp
+                    ]
+                    yield fluent_effects + ground_fluent_effects, fluent_assignment_var
+
+        for fluent_exp in fluents_with_max_parameters():
+            for (
+                fluent_effects,
+                fluent_assignment_var,
+            ) in ground_and_parametric_fluent_effects(fluent_exp):
+                # TODO: if fluent_effects is empty, bool_var can be avoided
+                for i, tp in enumerate(self.timepoints):
+                    assignment_vars = list(
+                        set(
+                            map(
+                                lambda t_eff: self.assignment_matrix[
+                                    (t_eff[0].timepoint, t_eff[0].delay)
+                                ][i],
+                                fluent_effects,
+                            )
+                        )
+                    )
+                    bool_var = self.new_bool_var()
+                    prev_resource_value = self.resources[fluent_exp][i][-1]
+                    for resource_value in self.resources[fluent_exp][i + 1]:
+                        self.model.add(
+                            resource_value == prev_resource_value
+                        ).only_enforce_if(bool_var)
+                        prev_resource_value = resource_value
+                    # not(assignment_vars[0] or ... or assignment_vars[-1]) => bool_var
+                    if fluent_assignment_var is None:
+                        self.model.add_bool_or(assignment_vars + [bool_var])
+                    else:
+                        self.model.add_bool_or(
+                            assignment_vars + [bool_var]
+                        ).only_enforce_if(fluent_assignment_var)
 
     def add_assign_effect_constraints(
         self,
@@ -1420,6 +1664,8 @@ class CPSETimepoints(CPSEBaseEngine):
                 A mapping of effects to their associated condition variables, used to enforce
                 conditional effects.
         """
+
+        # FIXME: consider also parametric fluents
 
         visited_timepoints = set()
         for fluent_exp in self.resources:
@@ -1535,7 +1781,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
         # map each fluent to its effects
         fluent_effects: Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]] = {}
-        for fluent_exp in self.get_all_fluent_expressions(problem):
+        for fluent_exp in self.resources:
             fluent_effects[fluent_exp] = {}
 
         for timing, eff, activity in problem.all_effects():
@@ -1625,7 +1871,8 @@ class CPSETimepoints(CPSEBaseEngine):
                             bool_var
                         )
 
-        self.add_no_effect_constraints(problem)
+        parametric_fluent_assignments = self.add_parametric_fluents_constraints()
+        self.add_no_effect_constraints(problem, parametric_fluent_assignments)
         self.add_assign_effect_constraints(problem, condition_vars)
 
     def add_condition(
