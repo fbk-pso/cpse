@@ -1,3 +1,4 @@
-from .cpse import CPSE, CPSETimepoints
+from .CPSE import CPSE
+from .CPSETimepoints import CPSETimepoints
 
 __all__ = ["cpse"]
