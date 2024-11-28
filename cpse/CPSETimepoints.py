@@ -127,6 +127,12 @@ class CPSETimepoints(CPSEBaseEngine):
             not activity.duration.is_left_open()
             and not activity.duration.is_right_open()
         )
+        start_var = self.model.new_int_var(
+            self.lower_bound, self.upper_bound, "start_" + activity.name
+        )
+        end_var = self.model.new_int_var(
+            self.lower_bound, self.upper_bound, "end_" + activity.name
+        )
         lower = activity.duration.lower
         upper = activity.duration.upper
         if lower.is_int_constant() and upper.is_int_constant():
@@ -134,25 +140,14 @@ class CPSETimepoints(CPSEBaseEngine):
             upper = upper.int_constant_value()
             if lower == upper:
                 # FixedDuration
-                start_var = self.model.new_int_var(
-                    self.lower_bound, self.upper_bound, "start_" + activity.name
-                )
-                end_var = self.model.new_int_var(
-                    self.lower_bound, self.upper_bound, "end_" + activity.name
-                )
                 duration_var = upper
             else:
                 # ClosedDurationInterval
-                start_var = lower
-                end_var = upper
-                duration_var = upper - lower
+                duration_var = self.model.new_int_var(
+                    self.lower_bound, self.upper_bound, "duration_" + activity.name
+                )
+                self.model.add_linear_constraint(duration_var, lower, upper)
         else:
-            start_var = self.model.new_int_var(
-                self.lower_bound, self.upper_bound, "start_" + activity.name
-            )
-            end_var = self.model.new_int_var(
-                self.lower_bound, self.upper_bound, "end_" + activity.name
-            )
             duration_var = self.model.new_int_var(
                 self.lower_bound, self.upper_bound, "duration_" + activity.name
             )
@@ -166,14 +161,14 @@ class CPSETimepoints(CPSEBaseEngine):
                 self._postponed_constraints.append(constrain_duration)
             else:
                 # ClosedDurationInterval
-                def constrain_start_end():
+                def constrain_duration():
                     self._set_fluent_vars_at_timepoint(tp_idx=-1)
                     lower_exp = self.fnode_to_value_or_variable(lower)
-                    self.model.add(start_var == lower_exp)
                     upper_exp = self.fnode_to_value_or_variable(upper)
-                    self.model.add(end_var == upper_exp)
+                    self.model.add(lower_exp <= duration_var)
+                    self.model.add(duration_var <= upper_exp)
 
-                self._postponed_constraints.append(constrain_start_end)
+                self._postponed_constraints.append(constrain_duration)
 
         return start_var, duration_var, end_var
 

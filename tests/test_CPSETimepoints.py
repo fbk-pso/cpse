@@ -35,11 +35,12 @@ class TestCPSETimepoints(CommonTests):
             get_environment().type_manager.IntType(),
             default_initial_value=5,
         )
+        problem.add_constraint(Equals(activity.start, 0))
         activity.set_duration_bounds(Times(fluent, 2), Times(fluent, 3))
 
         res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity.start).constant_value() == 10
-        assert res.plan.get(activity.end).constant_value() == 15
+        assert res.plan.get(activity.start).constant_value() == 0
+        assert 10 <= res.plan.get(activity.end).constant_value() <= 15
 
     def test_constraint_on_resource(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=1)

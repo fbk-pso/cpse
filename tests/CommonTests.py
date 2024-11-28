@@ -120,9 +120,10 @@ class CommonTests:
     def test_set_activity_duration_bounds(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=1)
         activity.set_duration_bounds(10, 14)
+        activity.add_constraint(Equals(activity.start, 0))
         res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity.start).constant_value() == 10
-        assert res.plan.get(activity.end).constant_value() == 14
+        assert res.plan.get(activity.start).constant_value() == 0
+        assert 10 <= res.plan.get(activity.end).constant_value() <= 14
 
     def test_activity_duration_as_parameter_exp1(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=5)
@@ -143,12 +144,13 @@ class CommonTests:
         int_var = problem.add_variable(
             "int_var", get_environment().type_manager.IntType()
         )
+        problem.add_constraint(Equals(activity.start, 0))
         problem.add_constraint(Equals(int_var, 5))
         activity.set_duration_bounds(Times(int_var, 2), Times(int_var, 3))
 
         res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity.start).constant_value() == 10
-        assert res.plan.get(activity.end).constant_value() == 15
+        assert res.plan.get(activity.start).constant_value() == 0
+        assert 10 <= res.plan.get(activity.end).constant_value() <= 15
 
     def test_activity_deadline_and_release_date(self, problem: SchedulingProblem):
         activity1 = problem.add_activity("activity1", duration=5)
@@ -502,7 +504,8 @@ class CommonTests:
         activity2 = problem.add_activity("activity2", duration=10)
         activity3 = problem.add_activity("activity3", duration=4)
 
-        activity2.set_duration_bounds(5, 15)
+        activity2.add_constraint(Equals(activity2.start, 5))
+        activity2.add_constraint(Equals(activity2.end, 15))
 
         # Each activity requires the machine resource
         activity2.uses(machine, 1)
