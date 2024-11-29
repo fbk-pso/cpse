@@ -436,6 +436,59 @@ class TestCPSETimepoints(CommonTests):
         assert res.plan.get(param3).constant_value() == o3
         assert res.plan.get(final_value_is_6).constant_value() == True
 
+    def test_constraint_and_condition_with_multiple_parametric_fluents(
+        self, problem: SchedulingProblem
+    ):
+        activity = problem.add_activity("activity", duration=5)
+
+        user_type1 = UserType("user_type1")
+        user_type2 = UserType("user_type2")
+        param1 = activity.add_parameter("param1", user_type1)
+        param2 = activity.add_parameter("param2", user_type2)
+        fluent1 = problem.add_fluent(
+            "fluent1",
+            IntType(),
+            obj1=user_type1,
+            obj2=user_type2,
+            default_initial_value=0,
+        )
+        fluent2 = problem.add_fluent(
+            "fluent2",
+            IntType(),
+            obj=user_type1,
+            default_initial_value=0,
+        )
+        o1 = problem.add_object("o1", user_type1)
+        o2 = problem.add_object("o2", user_type1)
+        o3 = problem.add_object("o3", user_type2)
+        o4 = problem.add_object("o4", user_type2)
+
+        problem.add_constraint(Equals(param1, o1))
+        problem.add_constraint(Equals(param2, o3))
+
+        activity.add_increase_effect(activity.start, fluent1(param1, param2), 1)
+        activity.add_increase_effect(activity.start, fluent2(param1), 1)
+        activity.add_increase_effect(activity.end, fluent1(param1, param2), 2)
+        activity.add_increase_effect(activity.end, fluent2(param1), 2)
+
+        problem.add_constraint(Equals(fluent1(param1, param2), fluent2(param1)))
+
+        problem.add_condition(
+            TimePointInterval(Timing(0, activity.start)),
+            And(Equals(fluent1(param1, param2), 1), Equals(fluent2(param1), 1)),
+        )
+        problem.add_condition(
+            ClosedTimeInterval(Timing(0, activity.start), Timing(0, activity.end)),
+            And(
+                And(GE(fluent1(o1, o3), 1), LE(fluent1(param1, param2), 3)),
+                And(GE(fluent2(o1), 1), LE(fluent2(param1), 3)),
+            ),
+        )
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert res.plan.get(param1).constant_value() == o1
+        assert res.plan.get(param2).constant_value() == o3
+
     def test_set_fluent_non_constant_initial_value(self, problem: SchedulingProblem):
         variable = problem.add_variable(
             "variable", get_environment().type_manager.IntType()
@@ -495,6 +548,36 @@ class TestCPSETimepoints(CommonTests):
 
         self.problem_solved_satisficing_or_optimally(problem)
 
+    def test_set_fluent_initial_value_as_parametric_fluent_exp(
+        self, problem: SchedulingProblem
+    ):
+        user_type = UserType("user_type")
+        param = problem.add_variable("param", user_type)
+        o1 = problem.add_object("o1", user_type)
+
+        fluent1 = problem.add_fluent(
+            "fluent1",
+            IntType(lower_bound=0),
+            obj=user_type,
+            default_initial_value=1,
+        )
+        fluent2 = problem.add_fluent(
+            "fluent2",
+            IntType(lower_bound=0),
+            default_initial_value=Times(fluent1(param), 2),
+        )
+        fluent3 = problem.add_fluent(
+            "fluent3", IntType(), obj=user_type, default_initial_value=Times(fluent2, 2)
+        )
+
+        problem.add_activity("activity", duration=5)
+
+        problem.add_constraint(Equals(fluent1(o1), 1))
+        problem.add_constraint(Equals(fluent2, 2))
+        problem.add_constraint(Equals(fluent3(o1), 4))
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
     def test_constraint_fluents_with_args(self, problem: SchedulingProblem):
         user_type = UserType("user_type")
         fluent = problem.add_fluent(
@@ -551,5 +634,21 @@ class TestCPSETimepoints(CommonTests):
 
         activity.add_increase_effect(activity.start, fluent(param1, param2), 2)
         activity.add_increase_effect(activity.start, fluent(param1, param3), 2)
+
+        self.problem_unsupported(problem)
+
+    def test_not_supported_activity_duration_with_parametric_fluents(
+        self, problem: SchedulingProblem
+    ):
+        activity = problem.add_activity("activity", duration=5)
+
+        user_type = UserType("user_type")
+        param = activity.add_parameter("param", user_type)
+        fluent = problem.add_fluent("fluent", IntType(), obj=user_type)
+        o1 = problem.add_object("o1", user_type)
+
+        activity.set_duration_bounds(
+            lower=Plus(fluent(param), 1), upper=Plus(fluent(param), 1)
+        )
 
         self.problem_unsupported(problem)

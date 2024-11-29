@@ -41,6 +41,7 @@ class CommonTests:
     ) -> PlanGenerationResult:
         with OneshotPlanner(name=self.engine_name()) as planner:
             res = planner.solve(problem)
+            print(res)
             print(res.log_messages)
             assert res.status in [
                 PlanGenerationResultStatus.SOLVED_SATISFICING,
@@ -54,6 +55,7 @@ class CommonTests:
     def problem_unsolvable(self, problem: SchedulingProblem) -> PlanGenerationResult:
         with OneshotPlanner(name=self.engine_name()) as planner:
             res = planner.solve(problem)
+            print(res)
             print(res.log_messages)
             assert res.status in [
                 PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY,
@@ -66,6 +68,7 @@ class CommonTests:
     def problem_unsupported(self, problem: SchedulingProblem) -> PlanGenerationResult:
         with OneshotPlanner(name=self.engine_name()) as planner:
             res = planner.solve(problem)
+            print(res)
             print(res.log_messages)
             assert res.status == PlanGenerationResultStatus.UNSUPPORTED_PROBLEM
             assert res.plan is None
