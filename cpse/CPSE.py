@@ -51,15 +51,23 @@ class CPSE(CPSEBaseEngine):
         if not problem.discrete_time:
             raise NotImplementedError("Continuous time not supported.")
 
-        fluent_exps = list(map(lambda e: e[1].fluent, problem.all_effects()))
+        parametric_fluent_exps = list(
+            filter(
+                lambda e: self._fluent_exp_contains_parameters(e[1].fluent),
+                problem.all_effects(),
+            )
+        )
         for fnode, activity in problem.all_constraints():
-            fluent_exps += list(self.extract_all_fluent_exp_from_fnode(fnode))
+            parametric_fluent_exps += list(
+                self.extract_all_parametric_fluent_exp_from_fnode(fnode)
+            )
         for time_interval, fnode, activity in problem.all_conditions():
-            fluent_exps += list(self.extract_all_fluent_exp_from_fnode(fnode))
+            parametric_fluent_exps += list(
+                self.extract_all_parametric_fluent_exp_from_fnode(fnode)
+            )
 
-        for fluent_exp in fluent_exps:
-            if self._fluent_exp_contains_parameters(fluent_exp):
-                raise NotImplementedError("Fluents with parameters are not supported.")
+        if len(parametric_fluent_exps) > 0:
+            raise NotImplementedError("Fluents with parameters are not supported.")
 
     def add_constraints(self, problem: SchedulingProblem):
         """

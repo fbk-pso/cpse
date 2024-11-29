@@ -222,7 +222,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         assert fluent_exp.is_fluent_exp()
         return any(arg.is_parameter_exp() for arg in fluent_exp.args)
 
-    def extract_all_fluent_exp_from_fnode(self, fnode: FNode) -> Set[FNode]:
+    def extract_all_parametric_fluent_exp_from_fnode(self, fnode: FNode) -> Set[FNode]:
         """
         Extracts all fluent expressions from the given FNode.
 
@@ -241,7 +241,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         while len(stack) > 0:
             fnode = stack.pop()
             if fnode.is_fluent_exp():
-                all_fluent_exps.add(fnode)
+                if self._fluent_exp_contains_parameters(fnode):
+                    all_fluent_exps.add(fnode)
             elif len(fnode.args) > 0:
                 for arg in fnode.args:
                     stack.append(arg)

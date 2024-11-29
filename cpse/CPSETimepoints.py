@@ -148,6 +148,12 @@ class CPSETimepoints(CPSEBaseEngine):
                 )
                 self.model.add_linear_constraint(duration_var, lower, upper)
         else:
+            for fnode in [lower, upper]:
+                if len(self.extract_all_parametric_fluent_exp_from_fnode(fnode)) > 0:
+                    # TODO: add support for activity durations with parametric fluents
+                    raise NotImplementedError(
+                        "Activity durations involving parametric fluents are not supported."
+                    )
             duration_var = self.model.new_int_var(
                 self.lower_bound, self.upper_bound, "duration_" + activity.name
             )
@@ -442,15 +448,47 @@ class CPSETimepoints(CPSEBaseEngine):
             for i in range(len(self.timepoints)):
                 self.resources[fluent_exp].append([])
 
-        self._set_fluent_vars_at_timepoint(tp_idx=-1)
-        for fluent_exp in self.resources:
-            if fluent_exp not in self._fluent_initial_value:
-                # uninitialized fluent
-                continue
+        def constrain_fluent_initial_values():
+            self._set_fluent_vars_at_timepoint(tp_idx=-1)
+            for fluent_exp in self.resources:
+                if fluent_exp not in self._fluent_initial_value:
+                    # uninitialized fluent
+                    continue
 
-            init_value = self._fluent_initial_value[fluent_exp]
-            value_var = self.fnode_to_value_or_variable(init_value)
-            self.model.add(self.resources[fluent_exp][0][0] == value_var)
+                init_value = self._fluent_initial_value[fluent_exp]
+                all_fluent_exps = self.extract_all_parametric_fluent_exp_from_fnode(
+                    init_value
+                )
+                all_parameters = self.extract_all_params_from_fluent_exps(
+                    all_fluent_exps
+                )
+                if len(all_parameters) == 0:
+                    value_var = self.fnode_to_value_or_variable(init_value)
+                    self.model.add(self.resources[fluent_exp][0][0] == value_var)
+                else:
+                    # initial value fnode contains fluents with parameters
+                    for ground_fluent_exps in self.get_all_fluent_assignments(
+                        all_fluent_exps, all_parameters
+                    ):
+                        for fluent_exp_prime, (
+                            ground_fluent_exp,
+                            assignment_var,
+                        ) in zip(all_fluent_exps, ground_fluent_exps):
+                            self._model_vars[fluent_exp_prime] = self.resources[
+                                ground_fluent_exp
+                            ][0][-1]
+
+                        value_var = self.fnode_to_value_or_variable(init_value)
+                        self.model.add(
+                            self.resources[fluent_exp][0][0] == value_var
+                        ).only_enforce_if(
+                            [
+                                assignment_var
+                                for ground_fluent_exp, assignment_var in ground_fluent_exps
+                            ]
+                        )
+
+        self._postponed_constraints.append(constrain_fluent_initial_values)
 
     def add_constraints(self, problem: SchedulingProblem):
         """
@@ -468,7 +506,9 @@ class CPSETimepoints(CPSEBaseEngine):
                 bool_var = self.add_constraint(fnode)
                 self.model.add_bool_and([bool_var])
             else:
-                all_fluent_exps = self.extract_all_fluent_exp_from_fnode(fnode)
+                all_fluent_exps = self.extract_all_parametric_fluent_exp_from_fnode(
+                    fnode
+                )
                 all_parameters = self.extract_all_params_from_fluent_exps(
                     all_fluent_exps
                 )
@@ -1007,7 +1047,7 @@ class CPSETimepoints(CPSEBaseEngine):
             self.model.add(start > end).only_enforce_if(constraint_var.negated())
             return
 
-        all_fluent_exps = self.extract_all_fluent_exp_from_fnode(fnode)
+        all_fluent_exps = self.extract_all_parametric_fluent_exp_from_fnode(fnode)
         all_parameters = self.extract_all_params_from_fluent_exps(all_fluent_exps)
         all_fluent_assignments = [None]
         if len(all_parameters) > 0:
