@@ -500,6 +500,7 @@ class CPSETimepoints(CPSEBaseEngine):
         """
 
         # TODO: avoid bool_var for the root node
+        # FIXME: _set_fluent_vars_at_timepoint must set the resource vars in the last timepoint with same value
 
         for fnode, activity in problem.all_constraints():
             if not self._fnode_contains_fluents(fnode):
@@ -658,6 +659,9 @@ class CPSETimepoints(CPSEBaseEngine):
     def add_no_effect_constraints(
         self,
         fluent_effects: Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]],
+        condition_vars: Dict[
+            Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]
+        ],
     ):
         """
         Adds constraints to ensure that fluent values remain unchanged if no effects are
@@ -669,21 +673,58 @@ class CPSETimepoints(CPSEBaseEngine):
         Args:
             fluent_effects (Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]]):
                 A nested dictionary mapping fluent expressions to their effects at specific timepoints.
+            condition_vars (Dict[Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]]):
+                A mapping of effects to their associated condition variables, used to enforce
+                conditional effects.
         """
 
         for fluent_exp in fluent_effects:
             for i, tp in enumerate(self.timepoints):
-                timings = fluent_effects[fluent_exp].keys()
-                tp_assignment_vars = list(
-                    map(
-                        lambda t: self.assignment_matrix[(t.timepoint, t.delay)][i],
-                        timings,
-                    )
-                )
+                # not([timing@tpi and ((fluent_assignment and condition_var) or ... )] or ... ) => no_effects_at_tp_var
+                # ([timing@tpi and ((fluent_assignment and condition_var) or ... )] or ... ) or no_effects_at_tp_var
+                first_level_disjunctive_vars = []
+                for timing in fluent_effects[fluent_exp]:
+                    timing_at_tpi = self.assignment_matrix[
+                        (timing.timepoint, timing.delay)
+                    ][i]
+                    second_level_disjunctive_vars = []
+                    for eff, fluent_assignment_var in fluent_effects[fluent_exp][
+                        timing
+                    ]["non_conditional"]:
+                        if fluent_assignment_var is None:
+                            pass
+                        else:
+                            second_level_disjunctive_vars.append(fluent_assignment_var)
+                    for eff, fluent_assignment_var in fluent_effects[fluent_exp][
+                        timing
+                    ]["conditional"]:
+                        if fluent_assignment_var is None:
+                            second_level_disjunctive_vars.append(condition_vars[eff])
+                        else:
+                            second_level_disjunctive_vars.append(
+                                self.bool_and_expression(
+                                    [fluent_assignment_var, condition_vars[eff]]
+                                )
+                            )
+
+                    if len(second_level_disjunctive_vars) == 0:
+                        first_level_disjunctive_vars.append(timing_at_tpi)
+                    else:
+                        first_level_disjunctive_vars.append(
+                            self.bool_and_expression(
+                                [
+                                    timing_at_tpi,
+                                    self.bool_or_expression(
+                                        second_level_disjunctive_vars
+                                    ),
+                                ]
+                            )
+                        )
 
                 no_effects_at_tp_var = self.new_bool_var()
-                # not(assignment_vars[0] or ... or assignment_vars[-1]) => no_effects_at_tp_var
-                self.model.add_bool_or(tp_assignment_vars + [no_effects_at_tp_var])
+                self.model.add_bool_or(
+                    first_level_disjunctive_vars + [no_effects_at_tp_var]
+                )
 
                 prev_resource_value = self.resources[fluent_exp][i][-1]
                 for resource_value in self.resources[fluent_exp][i + 1]:
@@ -814,6 +855,7 @@ class CPSETimepoints(CPSEBaseEngine):
         for i, bool_var in enumerate(
             self.assignment_matrix[(timing.timepoint, timing.delay)]
         ):
+            # FIXME: _set_fluent_vars_at_timepoint must set the resource vars in the last timepoint with same value
             self._set_fluent_vars_at_timepoint(tp_idx=i)
             resource_var = self.resources[fluent_exp][i + 1][fluent_idx]
             if value is None:
@@ -1009,7 +1051,7 @@ class CPSETimepoints(CPSEBaseEngine):
                             bool_var
                         )
 
-        self.add_no_effect_constraints(fluent_effects)
+        self.add_no_effect_constraints(fluent_effects, condition_vars)
         self.add_assign_effect_constraints(fluent_effects, condition_vars)
 
     def add_condition(

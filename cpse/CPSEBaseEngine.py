@@ -184,6 +184,56 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             self.lower_bound, self.upper_bound, f"int{self._int_var_counter}"
         )
 
+    def bool_and_expression(
+        self, bool_vars: List[Union[cp_model.IntVar, cp_model._NotBooleanVariable]]
+    ) -> Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+        """
+        Creates a boolean variable representing the logical AND of the given boolean variables.
+
+        Args:
+            bool_vars (List[Union[cp_model.IntVar, cp_model._NotBooleanVariable]]):
+                A list of boolean variables to be combined using a logical AND operation.
+
+        Returns:
+            Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+                A boolean variable representing the result of the AND operation.
+        """
+
+        assert len(bool_vars) >= 1
+        if len(bool_vars) == 1:
+            return bool_vars[0]
+        bool_var = self.new_bool_var()
+        self.model.add_bool_and(bool_vars).only_enforce_if(bool_var)
+        self.model.add_bool_or([v.negated() for v in bool_vars]).only_enforce_if(
+            bool_var.negated()
+        )
+        return bool_var
+
+    def bool_or_expression(
+        self, bool_vars: List[Union[cp_model.IntVar, cp_model._NotBooleanVariable]]
+    ) -> Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+        """
+        Creates a boolean variable representing the logical OR of the given boolean variables.
+
+        Args:
+            bool_vars (List[Union[cp_model.IntVar, cp_model._NotBooleanVariable]]):
+                A list of boolean variables to be combined using a logical OR operation.
+
+        Returns:
+            Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+                A boolean variable representing the result of the OR operation.
+        """
+
+        assert len(bool_vars) >= 1
+        if len(bool_vars) == 1:
+            return bool_vars[0]
+        bool_var = self.new_bool_var()
+        self.model.add_bool_or(bool_vars).only_enforce_if(bool_var)
+        self.model.add_bool_and([v.negated() for v in bool_vars]).only_enforce_if(
+            bool_var.negated()
+        )
+        return bool_var
+
     @functools.cache
     def _fnode_contains_fluents(self, fnode: FNode) -> bool:
         """

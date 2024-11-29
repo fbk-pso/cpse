@@ -489,6 +489,51 @@ class TestCPSETimepoints(CommonTests):
         assert res.plan.get(param1).constant_value() == o1
         assert res.plan.get(param2).constant_value() == o3
 
+    def test_effects_with_parametric_fluents(self, problem: SchedulingProblem):
+        activity1 = problem.add_activity("activity1", duration=5)
+        activity2 = problem.add_activity("activity2", duration=5)
+
+        user_type = UserType("user_type")
+        param = activity1.add_parameter("param1", user_type)
+        fluent = problem.add_fluent(
+            "fluent",
+            IntType(),
+            obj=user_type,
+            default_initial_value=0,
+        )
+        o1 = problem.add_object("o1", user_type)
+        o2 = problem.add_object("o2", user_type)
+
+        bool_var = problem.add_variable("bool_var", BoolType())
+
+        activity1.add_increase_effect(activity2.start, fluent(param), 1)
+        activity1.add_increase_effect(
+            activity2.start, fluent(param), 6, condition=Not(bool_var)
+        )
+        activity1.add_increase_effect(
+            activity2.start, fluent(param), 7, condition=bool_var
+        )
+
+        activity1.add_increase_effect(activity1.start, fluent(o1), 2)
+        activity1.add_increase_effect(
+            activity1.start, fluent(o1), 3, condition=bool_var
+        )
+
+        activity1.add_increase_effect(
+            activity1.start, fluent(o2), 4, condition=bool_var
+        )
+
+        problem.add_constraint(Equals(activity1.start, activity2.start))
+        problem.add_constraint(bool_var)
+        problem.add_constraint(Equals(param, o1))
+
+        problem.add_constraint(GE(fluent(o1), 0))
+        problem.add_constraint(LE(fluent(o1), 13))
+        problem.add_constraint(GE(fluent(o2), 0))
+        problem.add_constraint(LE(fluent(o2), 4))
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
     def test_set_fluent_non_constant_initial_value(self, problem: SchedulingProblem):
         variable = problem.add_variable(
             "variable", get_environment().type_manager.IntType()
