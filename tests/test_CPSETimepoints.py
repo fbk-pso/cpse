@@ -42,6 +42,46 @@ class TestCPSETimepoints(CommonTests):
         assert res.plan.get(activity.start).constant_value() == 0
         assert 10 <= res.plan.get(activity.end).constant_value() <= 15
 
+    def test_activity_duration_with_parametric_fluents(
+        self, problem: SchedulingProblem
+    ):
+
+        user_type = UserType("user_type")
+        param = problem.add_variable("param", user_type)
+        fluent = problem.add_fluent(
+            "fluent", IntType(), obj=user_type, default_initial_value=10
+        )
+        o1 = problem.add_object("o1", user_type)
+        activity = problem.add_activity("activity", duration=Plus(fluent(param), 10))
+
+        problem.add_constraint(Equals(activity.start, 0))
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        print(res.plan.get(activity.start).constant_value())
+        print(res.plan.get(activity.end).constant_value())
+        assert res.plan.get(activity.start).constant_value() == 0
+        assert res.plan.get(activity.end).constant_value() == 20
+
+    def test_activity_set_duration_bounds_with_parametric_fluents(
+        self, problem: SchedulingProblem
+    ):
+        activity = problem.add_activity("activity", duration=5)
+
+        user_type = UserType("user_type")
+        param = activity.add_parameter("param", user_type)
+        fluent = problem.add_fluent(
+            "fluent", IntType(), obj=user_type, default_initial_value=10
+        )
+        o1 = problem.add_object("o1", user_type)
+
+        activity.set_duration_bounds(lower=fluent(param), upper=Plus(fluent(param), 10))
+
+        problem.add_constraint(Equals(activity.start, 0))
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        assert res.plan.get(activity.start).constant_value() == 0
+        assert 10 <= res.plan.get(activity.end).constant_value() <= 20
+
     def test_constraint_on_resource(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=1)
         resource = problem.add_resource("resource", capacity=2)
@@ -679,21 +719,5 @@ class TestCPSETimepoints(CommonTests):
 
         activity.add_increase_effect(activity.start, fluent(param1, param2), 2)
         activity.add_increase_effect(activity.start, fluent(param1, param3), 2)
-
-        self.problem_unsupported(problem)
-
-    def test_not_supported_activity_duration_with_parametric_fluents(
-        self, problem: SchedulingProblem
-    ):
-        activity = problem.add_activity("activity", duration=5)
-
-        user_type = UserType("user_type")
-        param = activity.add_parameter("param", user_type)
-        fluent = problem.add_fluent("fluent", IntType(), obj=user_type)
-        o1 = problem.add_object("o1", user_type)
-
-        activity.set_duration_bounds(
-            lower=Plus(fluent(param), 1), upper=Plus(fluent(param), 1)
-        )
 
         self.problem_unsupported(problem)

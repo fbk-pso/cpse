@@ -148,33 +148,68 @@ class CPSETimepoints(CPSEBaseEngine):
                 )
                 self.model.add_linear_constraint(duration_var, lower, upper)
         else:
-            for fnode in [lower, upper]:
-                if len(self.extract_all_parametric_fluent_exp_from_fnode(fnode)) > 0:
-                    # TODO: add support for activity durations with parametric fluents
-                    raise NotImplementedError(
-                        "Activity durations involving parametric fluents are not supported."
-                    )
             duration_var = self.model.new_int_var(
                 self.lower_bound, self.upper_bound, "duration_" + activity.name
             )
-            if lower == upper:
-                # FixedDuration
-                def constrain_duration():
-                    self._set_fluent_vars_at_timepoint(tp_idx=-1)
-                    duration_exp = self.fnode_to_value_or_variable(upper)
-                    self.model.add(duration_var == duration_exp)
 
-                self._postponed_constraints.append(constrain_duration)
-            else:
-                # ClosedDurationInterval
-                def constrain_duration():
-                    self._set_fluent_vars_at_timepoint(tp_idx=-1)
-                    lower_exp = self.fnode_to_value_or_variable(lower)
-                    upper_exp = self.fnode_to_value_or_variable(upper)
-                    self.model.add(lower_exp <= duration_var)
-                    self.model.add(duration_var <= upper_exp)
+            def constrain_duration():
+                self._set_fluent_vars_at_timepoint(tp_idx=-1)
+                all_fluent_exps = self.extract_all_parametric_fluent_exp_from_fnode(
+                    lower
+                )
+                if lower != upper:
+                    all_fluent_exps.union(
+                        self.extract_all_parametric_fluent_exp_from_fnode(upper)
+                    )
+                all_parameters = self.extract_all_params_from_fluent_exps(
+                    all_fluent_exps
+                )
+                if len(all_parameters) == 0:
+                    if lower == upper:
+                        # FixedDuration
+                        duration_exp = self.fnode_to_value_or_variable(upper)
+                        self.model.add(duration_var == duration_exp)
+                    else:
+                        # ClosedDurationInterval
+                        lower_exp = self.fnode_to_value_or_variable(lower)
+                        upper_exp = self.fnode_to_value_or_variable(upper)
+                        self.model.add(lower_exp <= duration_var)
+                        self.model.add(duration_var <= upper_exp)
+                else:
+                    for ground_fluent_exps in self.get_all_fluent_assignments(
+                        all_fluent_exps, all_parameters
+                    ):
+                        for fluent_exp, (
+                            ground_fluent_exp,
+                            assignment_var,
+                        ) in zip(all_fluent_exps, ground_fluent_exps):
+                            self._model_vars[fluent_exp] = self.resources[
+                                ground_fluent_exp
+                            ][0][-1]
 
-                self._postponed_constraints.append(constrain_duration)
+                        fluent_assignment_vars = [
+                            assignment_var
+                            for ground_fluent_exp, assignment_var in ground_fluent_exps
+                        ]
+
+                        if lower == upper:
+                            # FixedDuration
+                            duration_exp = self.fnode_to_value_or_variable(upper)
+                            self.model.add(
+                                duration_var == duration_exp
+                            ).only_enforce_if(fluent_assignment_vars)
+                        else:
+                            # ClosedDurationInterval
+                            lower_exp = self.fnode_to_value_or_variable(lower)
+                            upper_exp = self.fnode_to_value_or_variable(upper)
+                            self.model.add(lower_exp <= duration_var).only_enforce_if(
+                                fluent_assignment_vars
+                            )
+                            self.model.add(duration_var <= upper_exp).only_enforce_if(
+                                fluent_assignment_vars
+                            )
+
+            self._postponed_constraints.append(constrain_duration)
 
         return start_var, duration_var, end_var
 
