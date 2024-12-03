@@ -103,6 +103,15 @@ class CPSETimepoints(CPSEBaseEngine):
             fluents[timing][fluent] = eff.fluent
             contains_parameters[timing][fluent] = contains_params
 
+        for timing, eff, activity in problem.all_effects():
+            fluent = eff.fluent.fluent()
+            all_fluent_exps = self.extract_all_fluent_exp_from_fnode(eff.value)
+            for fluent_exp in all_fluent_exps:
+                if fluent == fluent_exp.fluent():
+                    raise NotImplementedError(
+                        "The fluent affected by an effect cannot be included in the effect's value."
+                    )
+
     def _add_activity_timepoints(self, activity: Activity) -> Tuple[
         Union[int, cp_model.IntVar],
         Union[int, cp_model.IntVar],
@@ -458,6 +467,41 @@ class CPSETimepoints(CPSEBaseEngine):
                 tp_idx + 1
             ][-1]
 
+    def are_timepoints_equal(self, i: int, j: int) -> cp_model.IntVar:
+        """
+        Determines if the values of two timepoints are equal in the model.
+
+        This method creates and returns a boolean variable (`cp_model.IntVar`) that represents
+        whether the values of two specified timepoints are equal.
+
+        Args:
+            i (int): The index of the first timepoint.
+            j (int): The index of the second timepoint.
+
+        Returns:
+            cp_model.IntVar: A boolean variable that evaluates to `True` if the two timepoints
+            are equal, otherwise `False`.
+        """
+
+        assert i != j
+        assert i < len(self.timepoints)
+        assert j < len(self.timepoints)
+
+        tp_i_j_are_equal_key = f"{self.timepoints[i].name} == {self.timepoints[j].name}"
+        tp_j_i_are_equal_key = f"{self.timepoints[j].name} == {self.timepoints[i].name}"
+        if tp_i_j_are_equal_key not in self._variables_cache:
+            are_timepoints_equal = self.new_bool_var()
+            self.model.add(self.timepoints[i] == self.timepoints[j]).only_enforce_if(
+                are_timepoints_equal
+            )
+            self.model.add(self.timepoints[i] != self.timepoints[j]).only_enforce_if(
+                are_timepoints_equal.negated()
+            )
+            self._variables_cache[tp_i_j_are_equal_key] = are_timepoints_equal
+            self._variables_cache[tp_j_i_are_equal_key] = are_timepoints_equal
+
+        return self._variables_cache[tp_i_j_are_equal_key]
+
     def timepoints_setup(self, problem: SchedulingProblem):
         """
         Defines the constraints that links each activity timepoint (start or end)
@@ -556,7 +600,6 @@ class CPSETimepoints(CPSEBaseEngine):
         """
 
         # TODO: avoid bool_var for the root node
-        # FIXME: _set_fluent_vars_at_timepoint must set the resource vars in the last timepoint with same value
 
         for fnode, activity in problem.all_constraints():
             if not self._fnode_contains_fluents(fnode):
@@ -573,8 +616,17 @@ class CPSETimepoints(CPSEBaseEngine):
                     # for each timepoint, add a constraint defined on the fluents at that timepoint
                     for i in range(-1, len(self.timepoints)):
                         self._set_fluent_vars_at_timepoint(tp_idx=i)
-                        bool_var = self.add_constraint(fnode)
-                        self.model.add_bool_and([bool_var])
+                        if i == -1 or i == len(self.timepoints) - 1:
+                            bool_var = self.add_constraint(fnode)
+                            self.model.add_bool_and([bool_var])
+                        else:
+                            next_timepoint_is_different = self.are_timepoints_equal(
+                                i, i + 1
+                            ).negated()
+                            bool_var = self.add_constraint(fnode)
+                            self.model.add_bool_and([bool_var]).only_enforce_if(
+                                next_timepoint_is_different
+                            )
 
                 else:
                     for (
@@ -589,10 +641,20 @@ class CPSETimepoints(CPSEBaseEngine):
                                 all_fluent_exps, ground_fluent_exps, tp_idx=i
                             )
 
-                            bool_var = self.add_constraint(fnode)
-                            self.model.add_bool_and([bool_var]).only_enforce_if(
-                                fluent_assignment_vars
-                            )
+                            if i == -1 or i == len(self.timepoints) - 1:
+                                bool_var = self.add_constraint(fnode)
+                                self.model.add_bool_and([bool_var]).only_enforce_if(
+                                    fluent_assignment_vars
+                                )
+                            else:
+                                next_timepoint_is_different = self.are_timepoints_equal(
+                                    i, i + 1
+                                ).negated()
+                                bool_var = self.add_constraint(fnode)
+                                self.model.add_bool_and([bool_var]).only_enforce_if(
+                                    fluent_assignment_vars
+                                    + [next_timepoint_is_different]
+                                )
 
     def add_parametric_fluents_constraints(self, problem: SchedulingProblem):
         """
@@ -871,67 +933,112 @@ class CPSETimepoints(CPSEBaseEngine):
             condition_var = self.add_constraint(effect.condition)
             condition_vars[effect] = condition_var
 
-        for i, bool_var in enumerate(
+        for i, timing_at_tpi in enumerate(
             self.assignment_matrix[(timing.timepoint, timing.delay)]
         ):
-            # FIXME: _set_fluent_vars_at_timepoint must set the resource vars in the last timepoint with same value
-            self._set_fluent_vars_at_timepoint(tp_idx=i)
             resource_var = self.resources[fluent_exp][i + 1][fluent_idx]
-            if value is None:
-                value_var = self.fnode_to_value_or_variable(effect.value)
-                if effect.is_decrease():
-                    value_var = -value_var
-            else:
-                value_var = self.fnode_to_value_or_variable(value)
-
             if fluent_idx == 0:
                 prev_var = self.resources[fluent_exp][i][-1]
             else:
                 prev_var = self.resources[fluent_exp][i + 1][fluent_idx - 1]
 
-            if effect.is_assignment():
-                resource_equality = resource_var == value_var
-            else:
-                resource_equality = resource_var == (prev_var + value_var)
+            value_contains_fluents = self._fnode_contains_fluents(
+                effect.value if value is None else value
+            )
+            all_fluent_exps = self.extract_all_parametric_fluent_exp_from_fnode(
+                effect.value if value is None else value
+            )
+            all_parameters = self.extract_all_params_from_fluent_exps(all_fluent_exps)
+            all_fluent_assignments = [(None, None)]
+            if len(all_parameters) > 0:
+                all_fluent_assignments = self.get_all_fluent_assignments(
+                    all_fluent_exps, all_parameters
+                )
 
-            if fluent_assignment_var is None:
-                if effect.is_conditional():
-                    self.model.add(resource_equality).only_enforce_if(
-                        [bool_var, condition_var]
-                    )
-                    self.model.add(resource_var == prev_var).only_enforce_if(
-                        [bool_var, condition_var.negated()]
-                    )
+            for ground_fluent_exps, fluent_assignment_vars in all_fluent_assignments:
+                for j in range(
+                    i, (len(self.timepoints) if value_contains_fluents else i + 1)
+                ):
+                    self._set_fluent_vars_at_timepoint(tp_idx=j)
+                    if ground_fluent_exps is not None:
+                        self._set_parametric_fluent_vars_at_timepoint(
+                            all_fluent_exps, ground_fluent_exps, tp_idx=j
+                        )
 
-                else:
-                    self.model.add(resource_equality).only_enforce_if(bool_var)
+                    if value is None:
+                        value_var = self.fnode_to_value_or_variable(effect.value)
+                        if effect.is_decrease():
+                            value_var = -value_var
+                    else:
+                        value_var = self.fnode_to_value_or_variable(value)
 
-            else:
-                if effect.is_conditional():
-                    self.model.add(resource_equality).only_enforce_if(
-                        [bool_var, condition_var, fluent_assignment_var]
-                    )
-                    self.model.add(resource_var == prev_var).only_enforce_if(
-                        [bool_var, condition_var, fluent_assignment_var.negated()]
-                    )
-                    self.model.add(resource_var == prev_var).only_enforce_if(
-                        [bool_var, condition_var.negated(), fluent_assignment_var]
-                    )
-                    self.model.add(resource_var == prev_var).only_enforce_if(
-                        [
-                            bool_var,
-                            condition_var.negated(),
-                            fluent_assignment_var.negated(),
-                        ]
-                    )
+                    if effect.is_assignment():
+                        resource_equality = resource_var == value_var
+                    else:
+                        resource_equality = resource_var == (prev_var + value_var)
 
-                else:
-                    self.model.add(resource_equality).only_enforce_if(
-                        [bool_var, fluent_assignment_var]
-                    )
-                    self.model.add(resource_var == prev_var).only_enforce_if(
-                        [bool_var, fluent_assignment_var.negated()]
-                    )
+                    constraints: List[cp_model.Constraint] = []
+                    if fluent_assignment_var is None:
+                        if effect.is_conditional():
+                            c1 = self.model.add(resource_equality).only_enforce_if(
+                                condition_var
+                            )
+                            c2 = self.model.add(
+                                resource_var == prev_var
+                            ).only_enforce_if(condition_var.negated())
+                            constraints = [c1, c2]
+
+                        else:
+                            c1 = self.model.add(resource_equality)
+                            constraints = [c1]
+
+                    else:
+                        if effect.is_conditional():
+                            c1 = self.model.add(resource_equality).only_enforce_if(
+                                [condition_var, fluent_assignment_var]
+                            )
+                            c2 = self.model.add(
+                                resource_var == prev_var
+                            ).only_enforce_if(
+                                [condition_var, fluent_assignment_var.negated()]
+                            )
+                            c3 = self.model.add(
+                                resource_var == prev_var
+                            ).only_enforce_if(
+                                [condition_var.negated(), fluent_assignment_var]
+                            )
+                            c4 = self.model.add(
+                                resource_var == prev_var
+                            ).only_enforce_if(
+                                [
+                                    condition_var.negated(),
+                                    fluent_assignment_var.negated(),
+                                ]
+                            )
+                            constraints = [c1, c2, c3, c4]
+
+                        else:
+                            c1 = self.model.add(resource_equality).only_enforce_if(
+                                [fluent_assignment_var]
+                            )
+                            c2 = self.model.add(
+                                resource_var == prev_var
+                            ).only_enforce_if([fluent_assignment_var.negated()])
+                            constraints = [c1, c2]
+
+                    for constraint in constraints:
+                        constraint.only_enforce_if(timing_at_tpi)
+                        if value_contains_fluents:
+                            if i != j:
+                                constraint.only_enforce_if(
+                                    self.are_timepoints_equal(i, j)
+                                )
+                            if j + 1 < len(self.timepoints):
+                                constraint.only_enforce_if(
+                                    self.are_timepoints_equal(i, j + 1).negated()
+                                )
+                        if fluent_assignment_vars is not None:
+                            constraint.only_enforce_if(fluent_assignment_vars)
 
     def add_effects(self, problem: SchedulingProblem):
         """
@@ -1057,7 +1164,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 # propagate the value to the last variable when the number of effects
                 # is less than the maximum one
                 if idx < max_num_effects[fluent_exp]:
-                    for i, bool_var in enumerate(
+                    for i, timing_at_tpi in enumerate(
                         self.assignment_matrix[(timing.timepoint, timing.delay)]
                     ):
                         resource_var = self.resources[fluent_exp][i + 1][-1]
@@ -1067,7 +1174,7 @@ class CPSETimepoints(CPSEBaseEngine):
                             prev_var = self.resources[fluent_exp][i + 1][idx - 1]
 
                         self.model.add(resource_var == prev_var).only_enforce_if(
-                            bool_var
+                            timing_at_tpi
                         )
 
         self.add_no_effect_constraints(fluent_effects, condition_vars)
@@ -1087,19 +1194,7 @@ class CPSETimepoints(CPSEBaseEngine):
             fnode (FNode): The FNode representing the condition to be added as a constraint.
         """
 
-        start_delay = 0
-        if time_interval.lower.delay != 0:
-            start_delay += time_interval.lower.delay
-        if time_interval.is_left_open():
-            start_delay += 1
-        start = self._model_vars[time_interval.lower.timepoint] + start_delay
-
-        end_delay = 0
-        if time_interval.upper.delay != 0:
-            end_delay += time_interval.upper.delay
-        if time_interval.is_right_open():
-            end_delay -= 1
-        end = self._model_vars[time_interval.upper.timepoint] + end_delay
+        start, end = self._get_timeinterval_lower_upper_bounds(time_interval)
 
         # if there are no fluents in the condition, a constraint should be added
         if not self._fnode_contains_fluents(fnode):
@@ -1132,7 +1227,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
                 constraint_var = self.add_constraint(fnode)
 
-                tp_GE_start_key = f"{self.timepoints[i].name} >= {start.name}"
+                tp_GE_start_key = f"{self.timepoints[i].name} >= {repr(start)}"
                 if tp_GE_start_key not in self._variables_cache:
                     tp_GE_start = self.new_bool_var()
                     self.model.add(self.timepoints[i] >= start).only_enforce_if(
@@ -1144,7 +1239,7 @@ class CPSETimepoints(CPSEBaseEngine):
                     self._variables_cache[tp_GE_start_key] = tp_GE_start
                 tp_GE_start = self._variables_cache[tp_GE_start_key]
 
-                tp_LE_end_key = f"{self.timepoints[i].name} <= {end.name}"
+                tp_LE_end_key = f"{self.timepoints[i].name} <= {repr(end)}"
                 if tp_LE_end_key not in self._variables_cache:
                     tp_LE_end = self.new_bool_var()
                     self.model.add(self.timepoints[i] <= end).only_enforce_if(tp_LE_end)
@@ -1172,23 +1267,9 @@ class CPSETimepoints(CPSEBaseEngine):
                             ]
                         )
                 else:
-                    next_timepoint_is_different_key = (
-                        f"{self.timepoints[i + 1].name} != {self.timepoints[i].name}"
-                    )
-                    if next_timepoint_is_different_key not in self._variables_cache:
-                        next_timepoint_is_different = self.new_bool_var()
-                        self.model.add(
-                            self.timepoints[i + 1] != self.timepoints[i]
-                        ).only_enforce_if(next_timepoint_is_different)
-                        self.model.add(
-                            self.timepoints[i + 1] == self.timepoints[i]
-                        ).only_enforce_if(next_timepoint_is_different.negated())
-                        self._variables_cache[next_timepoint_is_different_key] = (
-                            next_timepoint_is_different
-                        )
-                    next_timepoint_is_different = self._variables_cache[
-                        next_timepoint_is_different_key
-                    ]
+                    next_timepoint_is_different = self.are_timepoints_equal(
+                        i, i + 1
+                    ).negated()
 
                     # (tp_GE_start and tp_LE_end) => constraint
                     if ground_fluent_exps is None:

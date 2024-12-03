@@ -272,7 +272,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         assert fluent_exp.is_fluent_exp()
         return any(arg.is_parameter_exp() for arg in fluent_exp.args)
 
-    def extract_all_parametric_fluent_exp_from_fnode(self, fnode: FNode) -> Set[FNode]:
+    def extract_all_fluent_exp_from_fnode(self, fnode: FNode) -> Set[FNode]:
         """
         Extracts all fluent expressions from the given FNode.
 
@@ -291,13 +291,33 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         while len(stack) > 0:
             fnode = stack.pop()
             if fnode.is_fluent_exp():
-                if self._fluent_exp_contains_parameters(fnode):
-                    all_fluent_exps.add(fnode)
+                all_fluent_exps.add(fnode)
             elif len(fnode.args) > 0:
                 for arg in fnode.args:
                     stack.append(arg)
 
         return all_fluent_exps
+
+    def extract_all_parametric_fluent_exp_from_fnode(self, fnode: FNode) -> Set[FNode]:
+        """
+        Extracts all fluent expressions with parameters from the given FNode.
+
+        This method traverses the provided FNode recursively and identifies all
+        fluent expressions with parameters contained within it.
+
+        Args:
+            fnode (FNode): The FNode to be traversed.
+
+        Returns:
+            Set[FNode]: A set of fluent expressions (`FNode`) found within the given `fnode`.
+        """
+
+        return set(
+            filter(
+                lambda fluent_exp: self._fluent_exp_contains_parameters(fluent_exp),
+                self.extract_all_fluent_exp_from_fnode(fnode),
+            )
+        )
 
     def extract_all_params_from_fluent_exps(
         self, fluent_exps: Iterable[FNode]
@@ -336,6 +356,43 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         assert t.timepoint in self._model_vars
         assert isinstance(t.delay, int)
         return cp_model.LinearExpr.sum([self._model_vars[t.timepoint], t.delay])
+
+    def _get_timeinterval_lower_upper_bounds(
+        self, time_interval: timing.TimeInterval
+    ) -> Tuple[cp_model.LinearExprT, cp_model.LinearExprT]:
+        """
+        Returns the linear expressions representing the lower and upper
+        bounds of the specified time interval in the model
+
+        Args:
+            time_interval (timing.TimeInterval): The time interval for which the bounds
+            are to be determined.
+
+        Returns:
+            Tuple[cp_model.LinearExprT, cp_model.LinearExprT]: A tuple containing:
+                - The first element is the lower bound of the time interval.
+                - The second element is the upper bound of the time interval.
+        """
+
+        lower_delay = 0
+        if time_interval.lower.delay != 0:
+            lower_delay += time_interval.lower.delay
+        if time_interval.is_left_open():
+            lower_delay += 1
+        lower = cp_model.LinearExpr.sum(
+            [self._model_vars[time_interval.lower.timepoint], lower_delay]
+        )
+
+        upper_delay = 0
+        if time_interval.upper.delay != 0:
+            upper_delay += time_interval.upper.delay
+        if time_interval.is_right_open():
+            upper_delay -= 1
+        upper = cp_model.LinearExpr.sum(
+            [self._model_vars[time_interval.upper.timepoint], upper_delay]
+        )
+
+        return lower, upper
 
     def _get_lower_upper_bounds(self, fluent: Fluent) -> Tuple[int, int]:
         """
@@ -916,6 +973,15 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                             for obj in self._type_objects_mapping[up_var.type]:
                                 if self.objects[obj] == solver.value(cp_var):
                                     assignment[up_var] = obj
+
+                try:
+                    # TODO: remove
+                    for fluent_exp in self.resources:
+                        print(fluent_exp)
+                        for resource_values in self.resources[fluent_exp]:
+                            print([solver.value(r) for r in resource_values])
+                except:
+                    pass
 
                 plan = Schedule(problem.activities, assignment, problem.environment)
 

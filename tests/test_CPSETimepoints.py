@@ -534,12 +534,9 @@ class TestCPSETimepoints(CommonTests):
         activity2 = problem.add_activity("activity2", duration=5)
 
         user_type = UserType("user_type")
-        param = activity1.add_parameter("param1", user_type)
+        param = activity1.add_parameter("param", user_type)
         fluent = problem.add_fluent(
-            "fluent",
-            IntType(),
-            obj=user_type,
-            default_initial_value=0,
+            "fluent", IntType(), obj=user_type, default_initial_value=0
         )
         o1 = problem.add_object("o1", user_type)
         o2 = problem.add_object("o2", user_type)
@@ -573,6 +570,30 @@ class TestCPSETimepoints(CommonTests):
         problem.add_constraint(LE(fluent(o2), 4))
 
         self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_parametric_fluents_in_effect_value(self, problem: SchedulingProblem):
+        activity1 = problem.add_activity("activity1", duration=5)
+        activity2 = problem.add_activity("activity2", duration=5)
+
+        user_type = UserType("user_type")
+        param = activity1.add_parameter("param", user_type)
+        fluent1 = problem.add_fluent(
+            "fluent1", IntType(), obj=user_type, default_initial_value=0
+        )
+        fluent2 = problem.add_fluent(
+            "fluent2", IntType(), obj=user_type, default_initial_value=2
+        )
+        o1 = problem.add_object("o1", user_type)
+        o2 = problem.add_object("o2", user_type)
+
+        activity1.add_increase_effect(
+            activity2.start, fluent1(param), Times(fluent2(param), 2)
+        )
+
+        problem.add_constraint(Equals(param, o1))
+        problem.add_constraint(LT(fluent1(o1), 4))
+
+        self.problem_unsolvable(problem)
 
     def test_set_fluent_non_constant_initial_value(self, problem: SchedulingProblem):
         variable = problem.add_variable(
@@ -720,4 +741,20 @@ class TestCPSETimepoints(CommonTests):
         activity.add_increase_effect(activity.start, fluent(param1, param2), 2)
         activity.add_increase_effect(activity.start, fluent(param1, param3), 2)
 
+        self.problem_unsupported(problem)
+
+    def test_not_supported_same_fluent_in_effect_value(
+        self, problem: SchedulingProblem
+    ):
+        activity1 = problem.add_activity("activity1", duration=5)
+        activity2 = problem.add_activity("activity2", duration=5)
+
+        user_type = UserType("user_type")
+        param = activity1.add_parameter("param", user_type)
+        fluent = problem.add_fluent(
+            "fluent", IntType(), obj=user_type, default_initial_value=0
+        )
+        o1 = problem.add_object("o1", user_type)
+
+        activity1.add_increase_effect(activity2.start, fluent(param), fluent(o1))
         self.problem_unsupported(problem)
