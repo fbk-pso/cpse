@@ -13,6 +13,104 @@ class TestCPSE(CommonTests):
     def engine_class(self):
         return CPSE
 
+    def test_optional_activities(self, problem: SchedulingProblem):
+        activity1 = problem.add_activity("activity1", 10, optional=True)
+        activity2 = problem.add_activity("activity2", 3, optional=True)
+
+        problem.add_constraint(
+            Or(
+                And(activity1.present, Not(activity2.present)),
+                And(activity2.present, Not(activity1.present)),
+            )
+        )
+
+        problem.add_quality_metric(MinimizeMakespan())
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+        present1 = res.plan.get(activity1.present.presence()).constant_value()
+        present2 = res.plan.get(activity2.present.presence()).constant_value()
+        assert present2 and not present1
+
+    def test_constraints_with_optional_activities(self, problem: SchedulingProblem):
+        activity1 = problem.add_activity("activity1", 10, optional=True)
+        activity2 = problem.add_activity("activity2", 3, optional=True)
+        int_var = problem.add_variable("int_var", IntType())
+        bool_var = problem.add_variable("bool_var", BoolType())
+
+        problem.add_constraint(
+            Or(
+                And(activity1.present, Not(activity2.present)),
+                And(activity2.present, Not(activity1.present)),
+            )
+        )
+        problem.add_constraint(activity1.present)
+
+        problem.add_constraint(bool_var, scope=[activity1.present])
+        problem.add_constraint(
+            Not(bool_var), scope=[activity1.present, activity2.present]
+        )
+
+        activity1.add_constraint(LT(int_var, 5))
+        activity2.add_constraint(GT(int_var, 5))
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+
+        present1 = res.plan.get(activity1.present.presence()).constant_value()
+        present2 = res.plan.get(activity2.present.presence()).constant_value()
+        assert present1 and not present2
+        assert res.plan.get(int_var).constant_value() < 5
+        assert res.plan.get(bool_var).constant_value()
+
+    def test_effects_with_optional_activities(self, problem: SchedulingProblem):
+        activity1 = problem.add_activity("activity1", 10, optional=True)
+        activity2 = problem.add_activity("activity2", 3, optional=True)
+        fluent = problem.add_fluent(
+            "fluent", IntType(lower_bound=0, upper_bound=1), default_initial_value=0
+        )
+
+        problem.add_constraint(
+            Or(
+                And(activity1.present, Not(activity2.present)),
+                And(activity2.present, Not(activity1.present)),
+            )
+        )
+        problem.add_constraint(activity2.present)
+
+        activity1.add_increase_effect(activity1.start + 1, fluent, 1)
+        activity2.add_increase_effect(activity2.start, fluent, 1)
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_conditions_with_optional_activities(self, problem: SchedulingProblem):
+        activity1 = problem.add_activity("activity1", 10, optional=True)
+        activity2 = problem.add_activity("activity2", 3, optional=True)
+        int_var = problem.add_variable("int_var", IntType())
+
+        problem.add_constraint(
+            Or(
+                And(activity1.present, Not(activity2.present)),
+                And(activity2.present, Not(activity1.present)),
+            )
+        )
+        problem.add_constraint(activity1.present)
+
+        activity1.add_condition(
+            ClosedTimeInterval(Timing(3, activity1.start), Timing(-2, activity1.end)),
+            LT(int_var, 5),
+        )
+
+        activity2.add_condition(
+            ClosedTimeInterval(Timing(3, activity1.start), Timing(-2, activity1.end)),
+            GT(int_var, 5),
+        )
+
+        res = self.problem_solved_satisficing_or_optimally(problem)
+
+        present1 = res.plan.get(activity1.present.presence()).constant_value()
+        present2 = res.plan.get(activity2.present.presence()).constant_value()
+        assert present1 and not present2
+        assert res.plan.get(int_var).constant_value() < 5
+
     def test_not_supported_assign_effect(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=5)
         resource = problem.add_resource("resource", 10)

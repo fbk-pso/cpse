@@ -1,4 +1,4 @@
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Union
 
 import unified_planning as up
 from unified_planning.model import (
@@ -7,7 +7,7 @@ from unified_planning.model import (
     ProblemKind,
     Effect,
 )
-from unified_planning.model.scheduling import SchedulingProblem
+from unified_planning.model.scheduling import SchedulingProblem, Activity
 
 from .CPSEBaseEngine import CPSEBaseEngine
 from ortools.sat.python import cp_model
@@ -57,7 +57,7 @@ class CPSE(CPSEBaseEngine):
                 problem.all_effects(),
             )
         )
-        for fnode, activity in problem.all_constraints():
+        for fnode, scope in problem.all_scoped_constraints():
             parametric_fluent_exps += list(
                 self.extract_all_parametric_fluent_exp_from_fnode(fnode)
             )
@@ -78,16 +78,13 @@ class CPSE(CPSEBaseEngine):
                 constraints to be added to the model.
         """
 
-        # TODO: avoid bool_var for the root node
-
-        for fnode in problem.base_constraints:
+        for fnode, scope in problem.all_scoped_constraints():
             bool_var = self.add_constraint(fnode)
-            self.model.add_bool_and([bool_var])
-
-        for act in problem.activities:
-            for fnode in act.constraints:
-                bool_var = self.add_constraint(fnode)
-                self.model.add_bool_and([bool_var])
+            constraint_var = self.model.add_bool_and([bool_var])
+            if len(scope) > 0:
+                constraint_var.only_enforce_if(
+                    self.fnode_to_value_or_variable(fn) for fn in scope
+                )
 
     def add_effects(self, problem: SchedulingProblem):
         """
@@ -129,13 +126,23 @@ class CPSE(CPSEBaseEngine):
             elif eff.is_decrease():
                 value = -value
             else:
+                # assignment effects not supported
                 raise NotImplementedError(f"Effect kind {eff.kind} not supported.")
 
             if eff.is_conditional():
-                bool_var = self.add_constraint(eff.condition)
-                fluent_effects[fluent_exp].append((timing, value, bool_var))
+                if activity is not None and activity.optional:
+                    bool_var = self.add_constraint(
+                        up.shortcuts.And(activity.present, eff.condition)
+                    )
+                else:
+                    bool_var = self.add_constraint(eff.condition)
             else:
-                fluent_effects[fluent_exp].append((timing, value, True))
+                if activity is not None and activity.optional:
+                    bool_var = self.fnode_to_value_or_variable(activity.present)
+                else:
+                    bool_var = True
+
+            fluent_effects[fluent_exp].append((timing, value, bool_var))
 
         for fluent_exp in fluent_effects:
             lb, ub = self._fluent_bounds[fluent_exp.fluent().name]
@@ -175,7 +182,11 @@ class CPSE(CPSEBaseEngine):
             )
 
     def add_condition(
-        self, time_interval: timing.TimeInterval, fnode: FNode, name: str
+        self,
+        time_interval: timing.TimeInterval,
+        fnode: FNode,
+        activity: Union[Activity, None],
+        name: str,
     ):
         """
         Adds a condition to the model, enforcing that it is satisfied within a specified time interval.
@@ -208,16 +219,27 @@ class CPSE(CPSEBaseEngine):
             end_delay -= 1
         end = self._model_vars[time_interval.upper.timepoint] + end_delay
 
-        interval_key = f"interval [{time_interval.lower.timepoint} + {start_delay}, {time_interval.upper.timepoint} + {end_delay}]"
-        if interval_key not in self._variables_cache:
-            duration = self.model.new_int_var(
-                self.lower_bound,
-                self.upper_bound,
-                f"{name}_duration",
+        # FIXME
+        # interval_key = f"interval [{time_interval.lower.timepoint} + {start_delay}, {time_interval.upper.timepoint} + {end_delay}]"
+        # if interval_key not in self._variables_cache:
+        duration = self.model.new_int_var(
+            self.lower_bound,
+            self.upper_bound,
+            f"{name}_duration",
+        )
+        if activity is not None and activity.optional:
+            interval_var = self.model.new_optional_interval_var(
+                start,
+                duration,
+                end,
+                self._model_vars[activity.present.presence()],
+                name,
             )
+        else:
             interval_var = self.model.new_interval_var(start, duration, end, name)
-            self._variables_cache[interval_key] = interval_var
-        interval_var = self._variables_cache[interval_key]
+        #     self._variables_cache[interval_key] = interval_var
+        # interval_var = self._variables_cache[interval_key]
+
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
 
     def add_conditions(self, problem: SchedulingProblem):
@@ -229,14 +251,5 @@ class CPSE(CPSEBaseEngine):
                 conditions to be added to the model.
         """
 
-        for i, (time_interval, fnode) in enumerate(problem.base_conditions):
-            name = f"base_condition{i}"
-            self.add_condition(time_interval, fnode, name)
-
-        for act in problem.activities:
-            i = 0
-            for time_interval in act.conditions:
-                for fnode in act.conditions[time_interval]:
-                    name = f"{act.name}_condition{i}"
-                    self.add_condition(time_interval, fnode, name)
-                    i += 1
+        for i, (time_interval, fnode, activity) in enumerate(problem.all_conditions()):
+            self.add_condition(time_interval, fnode, activity, f"condition{i}")

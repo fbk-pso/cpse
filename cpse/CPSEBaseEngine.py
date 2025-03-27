@@ -21,6 +21,7 @@ from unified_planning.model import (
     ProblemKind,
     Fluent,
     Object,
+    Presence,
 )
 from unified_planning.model.scheduling import SchedulingProblem, Activity
 from unified_planning.model.metrics import MinimizeMakespan
@@ -55,7 +56,7 @@ _BOOL_OPERATOR_MAP = {
 }
 
 activity_type = collections.namedtuple(
-    "activity_type", "start end interval up_activity"
+    "activity_type", "start end interval is_present up_activity"
 )
 
 
@@ -86,7 +87,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self._activities: Dict[str, activity_type] = {}
         # mapping timepoints, parameters and fluents to the corresponding integer variables in the model
         self._model_vars: Dict[
-            Union[timing.Timepoint, Parameter, Fluent], cp_model.IntVar
+            Union[timing.Timepoint, Parameter, Fluent, Presence], cp_model.IntVar
         ] = {}
         # mapping fluent to its lower bound and upper bound
         self._fluent_bounds: Dict[str, Tuple[int, int]] = {}
@@ -509,6 +510,15 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             assert param not in self._model_vars
             self._model_vars[param] = var
 
+    def add_presence_expressions(self, problem: SchedulingProblem):
+        for activity in problem.activities:
+            if activity.optional:
+                present_exp = activity.present.presence()
+                var = self.model.new_bool_var(f"present({present_exp.container})")
+
+                assert present_exp not in self._model_vars
+                self._model_vars[present_exp] = var
+
     def _get_compatible_objects(self, type: Type) -> List[Object]:
         """
         Retrieves a list of objects that are compatible with the specified type.
@@ -611,11 +621,22 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         """
 
         start_var, duration_var, end_var = self._add_activity_timepoints(activity)
-        interval_var = self.model.new_interval_var(
-            start_var, duration_var, end_var, activity.name
-        )
+        if activity.optional:
+            is_present_var = self._model_vars[activity.present.presence()]
+            interval_var = self.model.new_optional_interval_var(
+                start_var, duration_var, end_var, is_present_var, activity.name
+            )
+        else:
+            is_present_var = None
+            interval_var = self.model.new_interval_var(
+                start_var, duration_var, end_var, activity.name
+            )
         self._activities[activity.name] = activity_type(
-            start=start_var, end=end_var, interval=interval_var, up_activity=activity
+            start=start_var,
+            end=end_var,
+            interval=interval_var,
+            is_present=is_present_var,
+            up_activity=activity,
         )
         self._model_vars[activity.start] = start_var
         self._model_vars[activity.end] = end_var
@@ -653,6 +674,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             if fnode.is_parameter_exp():
                 results.append(self._model_vars[fnode.parameter()])
+
+            elif fnode.is_presence_exp():
+                results.append(self._model_vars[fnode.presence()])
 
             elif fnode.is_object_exp():
                 obj = fnode.object()
@@ -728,6 +752,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             elif fnode.node_type in [
                 OperatorKind.PARAM_EXP,
+                OperatorKind.IS_PRESENT_EXP,
                 OperatorKind.OBJECT_EXP,
                 OperatorKind.TIMING_EXP,
                 OperatorKind.FLUENT_EXP,
@@ -906,6 +931,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             # add problem-specific and activity-related parameters to the model
             self.add_parameters(problem)
+            self.add_presence_expressions(problem)
 
             # add the activities to the model
             for activity in problem.activities:
@@ -973,17 +999,19 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                             for obj in self._type_objects_mapping[up_var.type]:
                                 if self.objects[obj] == solver.value(cp_var):
                                     assignment[up_var] = obj
+                    elif isinstance(up_var, Presence):
+                        assert solver.value(cp_var) in [0, 1]
+                        assignment[up_var] = solver.value(cp_var) == 1
 
-                try:
-                    # TODO: remove
-                    for fluent_exp in self.resources:
-                        print(fluent_exp)
-                        for resource_values in self.resources[fluent_exp]:
-                            print([solver.value(r) for r in resource_values])
-                except:
-                    pass
-
-                plan = Schedule(problem.activities, assignment, problem.environment)
+                # filter optional activities not present in the plan
+                activities = list(
+                    filter(
+                        lambda act: not act.optional
+                        or assignment[act.present.presence()],
+                        problem.activities,
+                    )
+                )
+                plan = Schedule(activities, assignment, problem.environment)
 
                 if status == cp_model.OPTIMAL:
                     result_status = PlanGenerationResultStatus.SOLVED_OPTIMALLY
