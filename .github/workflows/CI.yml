@@ -26,6 +26,12 @@ jobs:
           python3 -m pip install unified-planning/
           echo -e "[engine cpse]\nmodule_name: cpse\nclass_name: CPSE\n\n[engine cpse-timepoints]\nmodule_name: cpse\nclass_name: CPSETimepoints" > ~/.up.ini
           python3 -m pip install pytest pytest-cov
-      - name: Run the tests
+      - name: Run cpse and cpse-timepoints tests
         run: |
           python -m pytest ./tests
+      - name: Run cpse tests from unified-planning
+        run: |
+          python unified-planning/up_test_cases/report.py cpse
+      - name: Run cpse-timepoints tests from unified-planning
+        run: |
+          python unified-planning/up_test_cases/report.py cpse-timepoints
