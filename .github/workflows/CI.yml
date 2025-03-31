@@ -18,13 +18,20 @@ jobs:
           python-version: '3.10'
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Install unified-planning, cpse and pytest
+      - name: Install unified-planning
         run: |
-          python3 -m pip install .
           git clone --branch optional-activities --single-branch https://github.com/aiplan4eu/unified-planning.git
           python3 -m pip install -r unified-planning/requirements.txt
           python3 -m pip install unified-planning/
+      - name: Install Aries
+        run: |
+          python3 -m pip install up-aries
+      - name: Install cpse
+        run: |
+          python3 -m pip install .
           echo -e "[engine cpse]\nmodule_name: cpse\nclass_name: CPSE\n\n[engine cpse-timepoints]\nmodule_name: cpse\nclass_name: CPSETimepoints" > ~/.up.ini
+      - name: Install pytest
+        run: |
           python3 -m pip install pytest pytest-cov
       - name: Run cpse and cpse-timepoints tests
         run: |
