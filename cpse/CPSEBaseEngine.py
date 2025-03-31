@@ -946,8 +946,10 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             )
 
             # add global start and end to the model variables
-            self._model_vars[timing.GlobalStartTiming(delay=0).timepoint] = 0
-            self._model_vars[timing.GlobalEndTiming().timepoint] = makespan_var
+            global_start = timing.GlobalStartTiming(delay=0).timepoint
+            global_end = timing.GlobalEndTiming().timepoint
+            self._model_vars[global_start] = 0
+            self._model_vars[global_end] = makespan_var
 
             # add problem-specific and activity-related effects to the model
             self.add_effects(problem)
@@ -988,7 +990,6 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 # map a decision variable to its solution value
                 assignment = {}
                 for up_var, cp_var in self._model_vars.items():
-                    assignment[up_var] = solver.value(cp_var)
                     # map a boolean parameter to its boolean value rather than the
                     # integer value returned by the solver
                     if isinstance(up_var, Parameter):
@@ -999,9 +1000,19 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                             for obj in self._type_objects_mapping[up_var.type]:
                                 if self.objects[obj] == solver.value(cp_var):
                                     assignment[up_var] = obj
+                                    break
+                        else:
+                            assignment[up_var] = solver.value(cp_var)
+
                     elif isinstance(up_var, Presence):
                         assert solver.value(cp_var) in [0, 1]
                         assignment[up_var] = solver.value(cp_var) == 1
+
+                    elif isinstance(up_var, timing.Timepoint) and up_var not in [
+                        global_start,
+                        global_end,
+                    ]:
+                        assignment[up_var] = solver.value(cp_var)
 
                 # filter optional activities not present in the plan
                 activities = list(
