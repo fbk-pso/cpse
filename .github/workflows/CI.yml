@@ -22,7 +22,7 @@ jobs:
         run: |
           python3 -m pip install -r ./requirements.txt
           python3 -m pip install .
-          git clone https://github.com/aiplan4eu/unified-planning.git
+          git clone --branch optional-activities --single-branch https://github.com/aiplan4eu/unified-planning.git
           python3 -m pip install -r unified-planning/requirements.txt
           python3 -m pip install unified-planning/
           echo -e "[engine cpse]\nmodule_name: cpse\nclass_name: CPSE\n\n[engine cpse-timepoints]\nmodule_name: cpse\nclass_name: CPSETimepoints" > ~/.up.ini
