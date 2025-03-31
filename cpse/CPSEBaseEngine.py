@@ -1013,7 +1013,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 )
                 plan = Schedule(activities, assignment, problem.environment)
 
-                if status == cp_model.OPTIMAL:
+                if status == cp_model.OPTIMAL and len(problem.quality_metrics) > 0:
                     result_status = PlanGenerationResultStatus.SOLVED_OPTIMALLY
                 else:
                     result_status = PlanGenerationResultStatus.SOLVED_SATISFICING

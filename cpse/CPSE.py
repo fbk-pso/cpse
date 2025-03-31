@@ -29,6 +29,13 @@ class CPSE(CPSEBaseEngine):
         return "CPSE"
 
     @staticmethod
+    def supported_kind() -> ProblemKind:
+        supported_kind = CPSEBaseEngine.supported_kind()
+        supported_kind.set_scheduling("OPTIONAL_ACTIVITIES")
+        supported_kind.set_scheduling("SCOPED_CONSTRAINTS")
+        return supported_kind
+
+    @staticmethod
     def supports(problem_kind: ProblemKind) -> bool:
         return problem_kind <= CPSE.supported_kind()
 
