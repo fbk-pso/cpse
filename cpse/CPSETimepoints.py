@@ -258,7 +258,7 @@ class CPSETimepoints(CPSEBaseEngine):
             problem_timings.add((activity.start, 0))
             problem_timings.add((activity.end, 0))
 
-        for fnode, activity in problem.all_constraints():
+        for fnode in problem.all_constraints():
             for timing in self._fnode_timings(fnode):
                 problem_timings.add((timing.timepoint, timing.delay))
 
@@ -601,7 +601,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
         # TODO: avoid bool_var for the root node
 
-        for fnode, activity in problem.all_constraints():
+        for fnode in problem.all_constraints():
             if not self._fnode_contains_fluents(fnode):
                 bool_var = self.add_constraint(fnode)
                 self.model.add_bool_and([bool_var])

@@ -1017,8 +1017,6 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     result_status = PlanGenerationResultStatus.SOLVED_OPTIMALLY
                 else:
                     result_status = PlanGenerationResultStatus.SOLVED_SATISFICING
-                    if timeout is not None and solver.wall_time > timeout:
-                        result_status = PlanGenerationResultStatus.TIMEOUT
 
                 return PlanGenerationResult(
                     result_status,
