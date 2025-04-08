@@ -741,7 +741,7 @@ class CPSETimepoints(CPSEBaseEngine):
         self,
         fluent_effects: Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]],
         condition_vars: Dict[
-            Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]
+            Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]
         ],
     ):
         """
@@ -754,7 +754,7 @@ class CPSETimepoints(CPSEBaseEngine):
         Args:
             fluent_effects (Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]]):
                 A nested dictionary mapping fluent expressions to their effects at specific timepoints.
-            condition_vars (Dict[Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]]):
+            condition_vars (Dict[Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]]):
                 A mapping of effects to their associated condition variables, used to enforce
                 conditional effects.
         """
@@ -818,7 +818,7 @@ class CPSETimepoints(CPSEBaseEngine):
         self,
         fluent_effects: Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]],
         condition_vars: Dict[
-            Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]
+            Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]
         ],
     ):
         """
@@ -828,7 +828,7 @@ class CPSETimepoints(CPSEBaseEngine):
         Args:
             fluent_effects (Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]]):
                 A nested dictionary mapping fluent expressions to their effects at specific timepoints.
-            condition_vars (Dict[Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]]):
+            condition_vars (Dict[Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]]):
                 A mapping of effects to their associated condition variables, used to enforce
                 conditional effects.
         """
@@ -897,7 +897,7 @@ class CPSETimepoints(CPSEBaseEngine):
         effect: Effect,
         fluent_idx: int,
         condition_vars: Dict[
-            Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]
+            Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]
         ],
         fluent_assignment_var: Union[cp_model.IntVar, None],
         value: Union[FNode, None] = None,
@@ -915,7 +915,7 @@ class CPSETimepoints(CPSEBaseEngine):
             fluent_exp (FNode): The fluent expression to which the effect is applied.
             effect (Effect): The effect to be applied.
             fluent_idx (int): An index identifying the fluent variable to be updated.
-            condition_vars (Dict[Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]]):
+            condition_vars (Dict[Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]]):
                 A mapping of effects to their associated condition variables, used to enforce
                 conditional effects.
             fluent_assignment_var (Union[cp_model.IntVar, None]):
@@ -1106,7 +1106,7 @@ class CPSETimepoints(CPSEBaseEngine):
         # add the effects as constraints to the model
         # sum the effect values of non-conditional effects
         condition_vars: Dict[
-            Effect, Union[cp_model.IntVar, cp_model._NotBooleanVariable]
+            Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]
         ] = {}
         for fluent_exp in fluent_effects:
             for timing in fluent_effects[fluent_exp]:

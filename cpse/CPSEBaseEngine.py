@@ -186,17 +186,17 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         )
 
     def bool_and_expression(
-        self, bool_vars: List[Union[cp_model.IntVar, cp_model._NotBooleanVariable]]
-    ) -> Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+        self, bool_vars: List[Union[cp_model.IntVar, cp_model.NotBooleanVariable]]
+    ) -> Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
         """
         Creates a boolean variable representing the logical AND of the given boolean variables.
 
         Args:
-            bool_vars (List[Union[cp_model.IntVar, cp_model._NotBooleanVariable]]):
+            bool_vars (List[Union[cp_model.IntVar, cp_model.NotBooleanVariable]]):
                 A list of boolean variables to be combined using a logical AND operation.
 
         Returns:
-            Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+            Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
                 A boolean variable representing the result of the AND operation.
         """
 
@@ -211,17 +211,17 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         return bool_var
 
     def bool_or_expression(
-        self, bool_vars: List[Union[cp_model.IntVar, cp_model._NotBooleanVariable]]
-    ) -> Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+        self, bool_vars: List[Union[cp_model.IntVar, cp_model.NotBooleanVariable]]
+    ) -> Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
         """
         Creates a boolean variable representing the logical OR of the given boolean variables.
 
         Args:
-            bool_vars (List[Union[cp_model.IntVar, cp_model._NotBooleanVariable]]):
+            bool_vars (List[Union[cp_model.IntVar, cp_model.NotBooleanVariable]]):
                 A list of boolean variables to be combined using a logical OR operation.
 
         Returns:
-            Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+            Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
                 A boolean variable representing the result of the OR operation.
         """
 
@@ -716,7 +716,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     def add_constraint(
         self, fnode: FNode, cache_enabled: bool = True
-    ) -> Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+    ) -> Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
         """
         Adds the constraint represented by the given FNode to the model.
 
@@ -732,7 +732,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 (default is True).
 
         Returns:
-            Union[cp_model.IntVar, cp_model._NotBooleanVariable]:
+            Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
                 A boolean variable (or its negation) representing the constraint.
         """
 
@@ -849,7 +849,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         assert len(results) == 1
         assert isinstance(results[0], cp_model.IntVar) or isinstance(
-            results[0], cp_model._NotBooleanVariable
+            results[0], cp_model.NotBooleanVariable
         )
         return results[0]
 
