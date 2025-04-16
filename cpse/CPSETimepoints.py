@@ -40,6 +40,9 @@ class CPSETimepoints(CPSEBaseEngine):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+    def solve_init(self):
+        super().solve_init()
+
         self.timepoints: List[cp_model.IntVar] = []
         self.assignment_matrix: Dict[
             Tuple[timing.Timepoint, int], List[cp_model.IntVar]

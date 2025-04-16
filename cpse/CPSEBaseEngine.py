@@ -80,6 +80,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         self.lower_bound: int = kwargs.get("lower_bound", 0)
         self.upper_bound: int = kwargs.get("upper_bound", cp_model.INT32_MAX)
+
+    def solve_init(self):
         self.model = cp_model.CpModel()
         self.objects: Dict[Object, int] = {}
 
@@ -848,6 +850,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
 
         assert len(results) == 1
+
+        # FIXME
+        if isinstance(results[0], bool):
+            bool_var = self.new_bool_var()
+            self.model.add_bool_and(results[0]).only_enforce_if(bool_var)
+            return bool_var
         assert isinstance(results[0], cp_model.IntVar) or isinstance(
             results[0], cp_model.NotBooleanVariable
         )
@@ -917,6 +925,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         timeout: Optional[float] = None,
         output_stream: Optional[IO[str]] = None,
     ) -> "up.engines.results.PlanGenerationResult":
+
+        self.solve_init()
 
         try:
             self.check_if_supported_problem(problem)
