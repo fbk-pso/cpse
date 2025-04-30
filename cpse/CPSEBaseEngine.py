@@ -694,10 +694,10 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     )
                 results.append(self._model_vars[fnode])
 
-            elif fnode.node_type in [
-                OperatorKind.BOOL_CONSTANT,
-                OperatorKind.INT_CONSTANT,
-            ]:
+            elif fnode.is_bool_constant():
+                results.append(self._model_vars[fnode.constant_value()])
+
+            elif fnode.is_int_constant():
                 results.append(fnode.constant_value())
 
             elif fnode.node_type in _ARITHMETIC_OPERATOR_MAP:
@@ -850,12 +850,6 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 raise NotImplementedError(f"Node type {fnode.node_type} not supported.")
 
         assert len(results) == 1
-
-        # FIXME
-        if isinstance(results[0], bool):
-            bool_var = self.new_bool_var()
-            self.model.add_bool_and(results[0]).only_enforce_if(bool_var)
-            return bool_var
         assert isinstance(results[0], cp_model.IntVar) or isinstance(
             results[0], cp_model.NotBooleanVariable
         )
@@ -960,6 +954,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             global_end = timing.GlobalEndTiming().timepoint
             self._model_vars[global_start] = 0
             self._model_vars[global_end] = makespan_var
+
+            # add true and false constants to the model variables
+            true_const = self.model.new_bool_var("true")
+            self.model.add_bool_and(true_const)
+            self._model_vars[True] = true_const
+            self._model_vars[False] = true_const.negated()
 
             # add problem-specific and activity-related effects to the model
             self.add_effects(problem)

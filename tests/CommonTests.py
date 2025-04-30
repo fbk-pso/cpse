@@ -169,6 +169,7 @@ class CommonTests:
         assert (activity2_start - 3) <= activity1_start
         assert activity1_end <= (activity2_end + 3)
 
+    @pytest.mark.skip(reason="ortools 9.12.4544: solver takes too long")
     def test_set_fluent_initial_value(self, problem: SchedulingProblem):
         resource = problem.add_resource("resource", capacity=2)
         problem.set_initial_value(resource, 1)
@@ -462,6 +463,7 @@ class CommonTests:
 
         self.problem_solved_satisficing_or_optimally(problem)
 
+    @pytest.mark.skip(reason="ortools 9.12.4544: solver takes too long")
     def test_fluent_set_initial_value(self, problem: SchedulingProblem):
         fluent = problem.add_fluent(
             "fluent",
@@ -496,6 +498,23 @@ class CommonTests:
         activity = problem.add_activity("activity", 2)
         activity.add_increase_effect(activity.end, fluent(o1), 1)
         activity.add_decrease_effect(activity.end, fluent(o2), 1)
+
+        self.problem_solved_satisficing_or_optimally(problem)
+
+    def test_constraint_with_constant_bool(self, problem: SchedulingProblem):
+        activity = problem.add_activity("activity", 1)
+        bool_var = problem.add_variable("bool_var", BoolType())
+
+        problem.add_constraint(True)
+        problem.add_constraint(Not(False))
+        problem.add_constraint(problem.environment.expression_manager.TRUE())
+        problem.add_constraint(Not(problem.environment.expression_manager.FALSE()))
+        problem.add_constraint(Not(Not(True)))
+        problem.add_constraint(And(True))
+        problem.add_constraint(And(bool_var, True))
+        problem.add_constraint(And(Or(bool_var, False), True))
+        problem.add_constraint(Or(And(bool_var, False), True))
+        problem.add_constraint(Implies(Or(bool_var, False), True))
 
         self.problem_solved_satisficing_or_optimally(problem)
 
