@@ -48,15 +48,14 @@ from unified_planning.model.types import Type, is_compatible_type
 from ortools.sat.python import cp_model
 
 
-# TODO: complete
 credits = Credits(
     "CPSE",
     "FBK PSO Unit",
-    "",
-    "",
+    "etosello@fbk.eu",
+    "https://github.com/fbk-pso/cpse",
     "GPLv3",
-    "",
-    "",
+    "CPSE is a scheduling engine that encodes scheduling problems as constraint satisfaction models.",
+    "CPSE (Constraint Programming Scheduling Engine) is a scheduling engine that encodes scheduling problems as constraint satisfaction models and solves them using the CP-SAT solver from Google OR-Tools.",
 )
 
 _ARITHMETIC_OPERATOR_MAP = {
@@ -428,8 +427,6 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         Raises:
             NotImplementedError: If the fluent's type is not integer or boolean.
         """
-
-        # TODO: use self.lower_bound or INT32_MIN?
 
         if fluent.type.is_int_type():
             lower_bound = fluent.type.lower_bound

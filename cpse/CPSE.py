@@ -196,7 +196,6 @@ class CPSE(CPSEBaseEngine):
                 actives.append(active)
 
             if lb > 0:
-                # TODO: add support for lb > 0
                 raise NotImplementedError(
                     "Fluent lower bound cannot be greater than 0."
                 )
@@ -243,9 +242,6 @@ class CPSE(CPSEBaseEngine):
             end_delay -= 1
         end = self._model_vars[time_interval.upper.timepoint] + end_delay
 
-        # FIXME
-        # interval_key = f"interval [{time_interval.lower.timepoint} + {start_delay}, {time_interval.upper.timepoint} + {end_delay}]"
-        # if interval_key not in self._variables_cache:
         duration = self.model.new_int_var(
             self.lower_bound,
             self.upper_bound,
@@ -261,8 +257,6 @@ class CPSE(CPSEBaseEngine):
             )
         else:
             interval_var = self.model.new_interval_var(start, duration, end, name)
-        #     self._variables_cache[interval_key] = interval_var
-        # interval_var = self._variables_cache[interval_key]
 
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
 

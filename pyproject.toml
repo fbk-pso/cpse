@@ -10,7 +10,6 @@ dependencies = [
     "unified-planning"
 ]
 authors = []
-description = "Constraint Programming Scheduler Engine"
+description = "Constraint Programming Scheduling Engine"
 readme = "README.md"
-license = "MIT"
 license-files = ["LICENSE"]

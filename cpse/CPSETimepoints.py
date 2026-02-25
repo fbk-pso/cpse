@@ -150,8 +150,6 @@ class CPSETimepoints(CPSEBaseEngine):
                 each represented as either an integer (for fixed values) or a model variable.
         """
 
-        # TODO: avoid code duplication
-
         assert (
             not activity.duration.is_left_open()
             and not activity.duration.is_right_open()
@@ -310,8 +308,6 @@ class CPSETimepoints(CPSEBaseEngine):
         Yields:
             FNode: Each fluent expression.
         """
-
-        # TODO: consider returning only the used parametric fluents
 
         for fluent in problem.fluents:
             if fluent.arity == 0:
@@ -531,8 +527,6 @@ class CPSETimepoints(CPSEBaseEngine):
             problem (SchedulingProblem): The scheduling problem.
         """
 
-        # TODO: try to use add_map_domain()
-
         problem_timings = self._collect_all_problem_timings(problem)
         self.timepoints = [
             self.model.new_int_var(self.lower_bound, self.upper_bound, f"timepoint{i}")
@@ -618,8 +612,6 @@ class CPSETimepoints(CPSEBaseEngine):
             problem (SchedulingProblem): The scheduling problem containing the
                 constraints to be added to the model.
         """
-
-        # TODO: avoid bool_var for the root node
 
         for fnode in problem.all_constraints():
             if not self._fnode_contains_fluents(fnode):
@@ -947,7 +939,6 @@ class CPSETimepoints(CPSEBaseEngine):
         """
 
         if effect.is_conditional():
-            # TODO: effect conditions can use fluents ?
             if self._fnode_contains_fluents(effect.condition):
                 raise NotImplementedError("Effect conditions must not include fluents.")
             condition_var = self.add_constraint(effect.condition)
