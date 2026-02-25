@@ -96,6 +96,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         self.lower_bound: int = kwargs.get("lower_bound", 0)
         self.upper_bound: int = kwargs.get("upper_bound", cp_model.INT32_MAX)
+        assert isinstance(self.lower_bound, int), "lower_bound must be an integer"
+        assert isinstance(self.upper_bound, int), "upper_bound must be an integer"
 
     def solve_init(self):
         self.model = cp_model.CpModel()
