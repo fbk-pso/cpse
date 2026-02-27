@@ -9,54 +9,44 @@ on:
       - develop
 
 jobs:
-  basic-checks:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
-      - name: Black check
-        run: |
-          python3 -m pip install black==25.12.0
-          python3 -m black --check .
-
-      - name: MyPy check
-        run: |
-          python3 -m pip install mypy==1.19.1
-          python3 -m mypy cpse
-
   test:
-    needs: [basic-checks]
     runs-on: ubuntu-latest
     steps:
       - name: Install Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
+
       - name: Checkout repository
         uses: actions/checkout@v4
+
       - name: Install unified-planning
         run: |
           git clone --branch optional-activities --single-branch https://github.com/aiplan4eu/unified-planning.git
           python3 -m pip install -r unified-planning/requirements.txt
           python3 -m pip install unified-planning/
-      - name: Install Aries
-        run: |
-          python3 -m pip install up-aries
+
       - name: Install cpse
         run: |
-          python3 -m pip install .
+          python3 -m pip install .[dev]
           echo -e "[engine cpse]\nmodule_name: cpse\nclass_name: CPSE\n\n[engine cpse-timepoints]\nmodule_name: cpse\nclass_name: CPSETimepoints" > ~/.up.ini
-      - name: Install pytest
+
+      - name: Black check
         run: |
-          python3 -m pip install pytest pytest-cov
-      - name: Run cpse and cpse-timepoints tests
+          python3 -m black --check .
+
+      - name: MyPy check
         run: |
-          python -m pytest ./tests
+          python3 -m mypy cpse
+
+      - name: Run cpse tests
+        run: |
+          python3 -m pytest ./tests
+
       - name: Run cpse tests from unified-planning
         run: |
-          python unified-planning/up_test_cases/report.py cpse
+          python3 unified-planning/up_test_cases/report.py cpse
+
       - name: Run cpse-timepoints tests from unified-planning
         run: |
-          python unified-planning/up_test_cases/report.py cpse-timepoints
+          python3 unified-planning/up_test_cases/report.py cpse-timepoints
