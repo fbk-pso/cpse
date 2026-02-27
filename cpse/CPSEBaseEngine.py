@@ -22,7 +22,6 @@ import operator
 import warnings
 import traceback
 import functools
-from fractions import Fraction
 
 import unified_planning as up
 from unified_planning.engines import (
@@ -54,7 +53,7 @@ credits = Credits(
     "FBK PSO Unit",
     "etosello@fbk.eu",
     "https://github.com/fbk-pso/cpse",
-    "GPLv3",
+    "LGPLv3",
     "CPSE is a scheduling engine that encodes scheduling problems as constraint satisfaction models.",
     "CPSE (Constraint Programming Scheduling Engine) is a scheduling engine that encodes scheduling problems as constraint satisfaction models and solves them using the CP-SAT solver from Google OR-Tools.",
 )
@@ -678,7 +677,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             fnode (FNode): The FNode representing an expression.
 
         Returns:
-            Union[cp_model.IntVar, cp_model.LinearExprT, bool, int, Fraction]:
+            Union[cp_model.IntVar, cp_model.LinearExprT, bool, int]:
                 The corresponding value or variable for the FNode. This can be
                 an `IntVar`, integer, boolean, a linear expression or the result
                 of applying an operator.
