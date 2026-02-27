@@ -22,6 +22,7 @@ import operator
 import warnings
 import traceback
 import functools
+from fractions import Fraction
 
 import unified_planning as up
 from unified_planning.engines import (
@@ -107,7 +108,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self._activities: Dict[str, activity_type] = {}
         # mapping timepoints, parameters and fluents to the corresponding integer variables in the model
         self._model_vars: Dict[
-            Union[timing.Timepoint, Parameter, Fluent, Presence], cp_model.IntVar
+            Union[timing.Timepoint, Parameter, Fluent, Presence],
+            Union[cp_model.IntVar, int],
         ] = {}
         # mapping fluent to its lower bound and upper bound
         self._fluent_bounds: Dict[str, Tuple[int, int]] = {}
@@ -571,11 +573,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 parameters += self._type_params_mapping[other_type]
         return parameters
 
-    def _add_activity_timepoints(self, activity: Activity) -> Tuple[
-        Union[int, cp_model.IntVar],
-        Union[int, cp_model.IntVar],
-        Union[int, cp_model.IntVar],
-    ]:
+    def _add_activity_timepoints(
+        self, activity: Activity
+    ) -> Tuple[cp_model.IntVar, Union[int, cp_model.IntVar], cp_model.IntVar]:
         """
         Adds variables for the start, end, and duration of an activity, and enforces
         constraints on them.
@@ -664,7 +664,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     def fnode_to_value_or_variable(
         self, fnode: FNode
-    ) -> Union[cp_model.IntVar, cp_model.LinearExprT, bool, int, Any]:
+    ) -> Union[cp_model.IntVar, cp_model.LinearExprT, bool, int]:
         """
         Converts an FNode to its corresponding value or variable representation
         in the model.
@@ -678,14 +678,14 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             fnode (FNode): The FNode representing an expression.
 
         Returns:
-            Union[cp_model.IntVar, cp_model.LinearExprT, bool, int, Any]:
+            Union[cp_model.IntVar, cp_model.LinearExprT, bool, int, Fraction]:
                 The corresponding value or variable for the FNode. This can be
                 an `IntVar`, integer, boolean, a linear expression or the result
                 of applying an operator.
         """
 
-        stack = [(fnode, False)]
-        results = []
+        stack: List[Tuple[FNode, bool]] = [(fnode, False)]
+        results: List[Union[cp_model.IntVar, cp_model.LinearExprT, bool, int]] = []
 
         while len(stack) > 0:
             fnode, processed = stack.pop()
@@ -758,7 +758,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         if self._fnode_contains_fluents(fnode):
             cache_enabled = False
 
-        stack = [(fnode, False)]
+        stack: List[Tuple[FNode, bool]] = [(fnode, False)]
         results = []
 
         while len(stack) > 0:
@@ -766,7 +766,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             # check if fnode cached
             if cache_enabled and not processed and repr(fnode) in self._variables_cache:
-                results.append(self._variables_cache[repr(fnode)])
+                results.append(self._variables_cache[repr(fnode)])  # type: ignore[arg-type]
 
             elif fnode.node_type in [
                 OperatorKind.PARAM_EXP,
@@ -781,14 +781,14 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 OperatorKind.TIMES,
                 OperatorKind.DIV,
             ]:
-                results.append(self.fnode_to_value_or_variable(fnode))
+                results.append(self.fnode_to_value_or_variable(fnode))  # type: ignore[arg-type]
 
             elif fnode.node_type == OperatorKind.NOT:
                 if not processed:
                     stack.append((fnode, True))
                     stack.append((fnode.args[0], False))
                 else:
-                    results.append(results.pop().negated())
+                    results.append(results.pop().negated())  # type: ignore
 
             elif fnode.node_type in [
                 OperatorKind.AND,
@@ -802,7 +802,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                         stack.append((arg, False))
                     continue
 
-                args = [results.pop() for arg in fnode.args]
+                args: List[cp_model.IntVar] = [
+                    results.pop() for arg in fnode.args  # type: ignore[misc]
+                ]
                 bool_var = self.new_bool_var()
                 if fnode.node_type == OperatorKind.AND:
                     self.model.add_bool_and(args).only_enforce_if(bool_var)
@@ -829,7 +831,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                         bool_var.negated()
                     )
 
-                results.append(bool_var)
+                results.append(bool_var)  # type: ignore[arg-type]
                 if cache_enabled:
                     self._variables_cache[repr(fnode)] = bool_var
 
@@ -841,7 +843,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                         stack.append((arg, False))
                     continue
 
-                args = [results.pop() for arg in fnode.args]
+                args: List[cp_model.IntVar] = [results.pop() for arg in fnode.args]
                 op = _BOOL_OPERATOR_MAP[fnode.node_type]
                 bool_var = self.new_bool_var()
                 self.model.add(op(args[0], args[1])).only_enforce_if(bool_var)
@@ -858,7 +860,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                         bool_var.negated()
                     )
 
-                results.append(bool_var)
+                results.append(bool_var)  # type: ignore[arg-type]
                 if cache_enabled:
                     self._variables_cache[repr(fnode)] = bool_var
 
@@ -975,7 +977,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             true_const = self.model.new_bool_var("true")
             self.model.add_bool_and(true_const)
             self._model_vars[True] = true_const
-            self._model_vars[False] = true_const.negated()
+            self._model_vars[False] = true_const.negated()  # type: ignore[assignment]
 
             # add problem-specific and activity-related effects to the model
             self.add_effects(problem)
@@ -996,7 +998,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 solver.parameters.max_time_in_seconds = timeout
             if output_stream is not None:
                 solver.parameters.log_search_progress = True
-                solver.log_callback = lambda s: output_stream.write(s + "\n")
+                solver.log_callback = lambda s: output_stream.write(s + "\n")  # type: ignore[assignment]
                 solver.parameters.log_to_stdout = False
 
             status = solver.solve(self.model)
@@ -1014,7 +1016,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
                 # map a decision variable to its solution value
-                assignment = {}
+                assignment: Dict[
+                    Union[Parameter, Presence, timing.Timepoint], Union[bool, int]
+                ] = {}
                 for up_var, cp_var in self._model_vars.items():
                     # map a boolean parameter to its boolean value rather than the
                     # integer value returned by the solver
