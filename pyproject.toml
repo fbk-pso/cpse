@@ -13,3 +13,10 @@ authors = []
 description = "Constraint Programming Scheduling Engine"
 readme = "README.md"
 license-files = ["LICENSE"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.5",
+    "black==25.12.0",
+    "mypy==1.19.1"
+]
