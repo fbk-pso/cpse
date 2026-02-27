@@ -20,15 +20,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install unified-planning
-        run: |
-          python3 -m pip install git+https://github.com/aiplan4eu/unified-planning.git@optional-activities
-
-      - name: Install cpse
-        run: |
-          python3 -m pip install .[dev]
-          echo -e "[engine cpse]\nmodule_name: cpse\nclass_name: CPSE\n\n[engine cpse-timepoints]\nmodule_name: cpse\nclass_name: CPSETimepoints" > ~/.up.ini
-
       - name: Black check
         run: |
           python3 -m black --check .
@@ -36,6 +27,17 @@ jobs:
       - name: MyPy check
         run: |
           python3 -m mypy cpse
+
+      - name: Install unified-planning
+        run: |
+          git clone --branch optional-activities --single-branch https://github.com/aiplan4eu/unified-planning.git
+          python3 -m pip install -r unified-planning/requirements.txt
+          python3 -m pip install unified-planning/
+
+      - name: Install cpse
+        run: |
+          python3 -m pip install .[dev]
+          echo -e "[engine cpse]\nmodule_name: cpse\nclass_name: CPSE\n\n[engine cpse-timepoints]\nmodule_name: cpse\nclass_name: CPSETimepoints" > ~/.up.ini
 
       - name: Run cpse tests
         run: |
