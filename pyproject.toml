@@ -13,7 +13,7 @@ dependencies = [
 authors = []
 description = "Constraint Programming Scheduling Engine"
 readme = "README.md"
-license = "LGPLv3"
+license = "LGPL-3.0-only"
 license-files = ["LICENSE"]
 
 [project.optional-dependencies]
