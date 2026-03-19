@@ -22,7 +22,7 @@ jobs:
 
       - name: Install unified-planning
         run: |
-          git clone --branch optional-activities --single-branch https://github.com/aiplan4eu/unified-planning.git ../unified-planning
+          git clone --single-branch https://github.com/aiplan4eu/unified-planning.git ../unified-planning
           python3 -m pip install -r ../unified-planning/requirements.txt
           python3 -m pip install ../unified-planning/
 

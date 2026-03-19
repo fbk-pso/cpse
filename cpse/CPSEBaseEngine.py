@@ -692,7 +692,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             if fnode.is_parameter_exp():
                 results.append(self._model_vars[fnode.parameter()])
 
-            elif fnode.is_presence_exp():
+            elif fnode.is_present_exp():
                 results.append(self._model_vars[fnode.presence()])
 
             elif fnode.is_object_exp():
@@ -769,7 +769,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             elif fnode.node_type in [
                 OperatorKind.PARAM_EXP,
-                OperatorKind.IS_PRESENT_EXP,
+                OperatorKind.PRESENT_EXP,
                 OperatorKind.OBJECT_EXP,
                 OperatorKind.TIMING_EXP,
                 OperatorKind.FLUENT_EXP,
