@@ -107,7 +107,7 @@ class CPSE(CPSEBaseEngine):
             constraint_var = self.model.add_bool_and([bool_var])
             if len(scope) > 0:
                 constraint_var.only_enforce_if(
-                    self.fnode_to_value_or_variable(fn) for fn in scope
+                    self.fnode_to_value_or_variable(fn) for fn in scope  # type: ignore[misc]
                 )
 
     def add_effects(self, problem: SchedulingProblem):
@@ -125,7 +125,14 @@ class CPSE(CPSEBaseEngine):
 
         # map each fluent to its effects, adjusting values based on increase/decrease effect types
         fluent_effects: Dict[
-            FNode, List[Tuple["timing.Timing", int, cp_model.IntVar]]
+            FNode,
+            List[
+                Tuple[
+                    "timing.Timing",
+                    int,
+                    Union[cp_model.IntVar, cp_model.NotBooleanVariable, bool],
+                ]
+            ],
         ] = {}
         for timing, eff, activity in problem.all_effects():
             eff: Effect
@@ -153,6 +160,7 @@ class CPSE(CPSEBaseEngine):
                 # assignment effects not supported
                 raise NotImplementedError(f"Effect kind {eff.kind} not supported.")
 
+            bool_var: Union[cp_model.IntVar, cp_model.NotBooleanVariable, bool]
             if eff.is_conditional():
                 if activity is not None and activity.optional:
                     bool_var = self.add_constraint(
@@ -162,7 +170,7 @@ class CPSE(CPSEBaseEngine):
                     bool_var = self.add_constraint(eff.condition)
             else:
                 if activity is not None and activity.optional:
-                    bool_var = self.fnode_to_value_or_variable(activity.present)
+                    bool_var = self.fnode_to_value_or_variable(activity.present)  # type: ignore[assignment]
                 else:
                     bool_var = True
 
@@ -187,16 +195,17 @@ class CPSE(CPSEBaseEngine):
                     "Only integer and boolean constants are supported as initial values for fluents."
                 )
 
-            times = [0]
+            times: List[cp_model.LinearExprT] = [0]
             values = [init_value]
-            actives = [True]
+            actives: List[Union[cp_model.IntVar, cp_model.NotBooleanVariable, bool]] = [
+                True
+            ]
             for timing, value, active in fluent_effects[fluent_exp]:
                 times.append(self._convert_timing_to_linear_expr(timing))
                 values.append(value)
                 actives.append(active)
 
             if lb > 0:
-                # TODO: add support for lb > 0
                 raise NotImplementedError(
                     "Fluent lower bound cannot be greater than 0."
                 )
@@ -243,9 +252,6 @@ class CPSE(CPSEBaseEngine):
             end_delay -= 1
         end = self._model_vars[time_interval.upper.timepoint] + end_delay
 
-        # FIXME
-        # interval_key = f"interval [{time_interval.lower.timepoint} + {start_delay}, {time_interval.upper.timepoint} + {end_delay}]"
-        # if interval_key not in self._variables_cache:
         duration = self.model.new_int_var(
             self.lower_bound,
             self.upper_bound,
@@ -261,8 +267,6 @@ class CPSE(CPSEBaseEngine):
             )
         else:
             interval_var = self.model.new_interval_var(start, duration, end, name)
-        #     self._variables_cache[interval_key] = interval_var
-        # interval_var = self._variables_cache[interval_key]
 
         self.model.add_cumulative([interval_var], [bool_var.negated()], 0)
 

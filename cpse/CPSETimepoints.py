@@ -15,7 +15,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
-from typing import List, Tuple, Union, Dict, Set, Iterable
+from typing import List, Tuple, Union, Dict, Set, Iterable, Optional
 import collections
 import itertools
 
@@ -23,6 +23,7 @@ import unified_planning as up
 from unified_planning.model import (
     Parameter,
     FNode,
+    Fluent,
     timing,
     ProblemKind,
     Effect,
@@ -66,7 +67,7 @@ class CPSETimepoints(CPSEBaseEngine):
         ] = {}
         self.resources: Dict[FNode, List[List[cp_model.IntVar]]] = {}
         self.parametric_fluent_assignments: Dict[
-            FNode, List[Tuple[FNode, Tuple[Object], cp_model.IntVar]]
+            FNode, Dict[FNode, Tuple[Tuple[Object, ...], cp_model.IntVar]]
         ] = {}
 
     @property
@@ -105,8 +106,12 @@ class CPSETimepoints(CPSEBaseEngine):
         if not problem.discrete_time:
             raise NotImplementedError("Continuous time not supported.")
 
-        fluents = collections.defaultdict(dict)
-        contains_parameters = collections.defaultdict(dict)
+        fluents: Dict["timing.Timing", Dict[Fluent, FNode]] = collections.defaultdict(
+            dict
+        )
+        contains_parameters: Dict["timing.Timing", Dict[Fluent, bool]] = (
+            collections.defaultdict(dict)
+        )
         for timing, eff, activity in problem.all_effects():
             fluent = eff.fluent.fluent()
             contains_params = self._fluent_exp_contains_parameters(eff.fluent)
@@ -132,11 +137,9 @@ class CPSETimepoints(CPSEBaseEngine):
                         "The fluent affected by an effect cannot be included in the effect's value."
                     )
 
-    def _add_activity_timepoints(self, activity: Activity) -> Tuple[
-        Union[int, cp_model.IntVar],
-        Union[int, cp_model.IntVar],
-        Union[int, cp_model.IntVar],
-    ]:
+    def _add_activity_timepoints(
+        self, activity: Activity
+    ) -> Tuple[cp_model.IntVar, Union[int, cp_model.IntVar], cp_model.IntVar]:
         """
         Adds variables for the start, end, and duration of an activity, and enforces
         constraints on them.
@@ -149,8 +152,6 @@ class CPSETimepoints(CPSEBaseEngine):
                 A tuple containing the start time, end time, and duration for the activity,
                 each represented as either an integer (for fixed values) or a model variable.
         """
-
-        # TODO: avoid code duplication
 
         assert (
             not activity.duration.is_left_open()
@@ -183,15 +184,18 @@ class CPSETimepoints(CPSEBaseEngine):
 
             def constrain_duration():
                 self._set_fluent_vars_at_timepoint(tp_idx=-1)
-                all_fluent_exps = self.extract_all_parametric_fluent_exp_from_fnode(
-                    lower
-                )
                 if lower != upper:
-                    all_fluent_exps.union(
-                        self.extract_all_parametric_fluent_exp_from_fnode(upper)
+                    all_fluent_exps = list(
+                        self.extract_all_parametric_fluent_exp_from_fnode(lower).union(
+                            self.extract_all_parametric_fluent_exp_from_fnode(upper)
+                        )
                     )
-                all_parameters = self.extract_all_params_from_fluent_exps(
-                    all_fluent_exps
+                else:
+                    all_fluent_exps = list(
+                        self.extract_all_parametric_fluent_exp_from_fnode(lower)
+                    )
+                all_parameters = list(
+                    self.extract_all_params_from_fluent_exps(all_fluent_exps)
                 )
                 if len(all_parameters) == 0:
                     if lower == upper:
@@ -310,8 +314,6 @@ class CPSETimepoints(CPSEBaseEngine):
         Yields:
             FNode: Each fluent expression.
         """
-
-        # TODO: consider returning only the used parametric fluents
 
         for fluent in problem.fluents:
             if fluent.arity == 0:
@@ -520,7 +522,7 @@ class CPSETimepoints(CPSEBaseEngine):
             self._variables_cache[tp_i_j_are_equal_key] = are_timepoints_equal
             self._variables_cache[tp_j_i_are_equal_key] = are_timepoints_equal
 
-        return self._variables_cache[tp_i_j_are_equal_key]
+        return self._variables_cache[tp_i_j_are_equal_key]  # type: ignore[return-value]
 
     def timepoints_setup(self, problem: SchedulingProblem):
         """
@@ -530,8 +532,6 @@ class CPSETimepoints(CPSEBaseEngine):
         Args:
             problem (SchedulingProblem): The scheduling problem.
         """
-
-        # TODO: try to use add_map_domain()
 
         problem_timings = self._collect_all_problem_timings(problem)
         self.timepoints = [
@@ -579,11 +579,11 @@ class CPSETimepoints(CPSEBaseEngine):
                     continue
 
                 init_value = self._fluent_initial_value[fluent_exp]
-                all_fluent_exps = self.extract_all_parametric_fluent_exp_from_fnode(
-                    init_value
+                all_fluent_exps = list(
+                    self.extract_all_parametric_fluent_exp_from_fnode(init_value)
                 )
-                all_parameters = self.extract_all_params_from_fluent_exps(
-                    all_fluent_exps
+                all_parameters = list(
+                    self.extract_all_params_from_fluent_exps(all_fluent_exps)
                 )
                 if len(all_parameters) == 0:
                     value_var = self.fnode_to_value_or_variable(init_value)
@@ -619,18 +619,16 @@ class CPSETimepoints(CPSEBaseEngine):
                 constraints to be added to the model.
         """
 
-        # TODO: avoid bool_var for the root node
-
         for fnode in problem.all_constraints():
             if not self._fnode_contains_fluents(fnode):
                 bool_var = self.add_constraint(fnode)
                 self.model.add_bool_and([bool_var])
             else:
-                all_fluent_exps = self.extract_all_parametric_fluent_exp_from_fnode(
-                    fnode
+                all_fluent_exps = list(
+                    self.extract_all_parametric_fluent_exp_from_fnode(fnode)
                 )
-                all_parameters = self.extract_all_params_from_fluent_exps(
-                    all_fluent_exps
+                all_parameters = list(
+                    self.extract_all_params_from_fluent_exps(all_fluent_exps)
                 )
                 if len(all_parameters) == 0:
                     # for each timepoint, add a constraint defined on the fluents at that timepoint
@@ -687,7 +685,7 @@ class CPSETimepoints(CPSEBaseEngine):
         all_fluent_exps = self.get_all_fluent_expressions(problem)
         all_parameters = list(self.all_parameters_used_in_fluents(problem))
 
-        params_objs_assignment = {}
+        params_objs_assignment: Dict[Parameter, Dict[Object, cp_model.IntVar]] = {}
         for param in all_parameters:
             params_objs_assignment[param] = {}
             for obj in self._type_objects_mapping[param.type]:
@@ -783,7 +781,9 @@ class CPSETimepoints(CPSEBaseEngine):
             for i, tp in enumerate(self.timepoints):
                 # not([timing@tpi and ((fluent_assignment and condition_var) or ... )] or ... ) => no_effects_at_tp_var
                 # ([timing@tpi and ((fluent_assignment and condition_var) or ... )] or ... ) or no_effects_at_tp_var
-                first_level_disjunctive_vars = []
+                first_level_disjunctive_vars: List[
+                    Union[cp_model.IntVar, cp_model.NotBooleanVariable]
+                ] = []
                 for timing in fluent_effects[fluent_exp]:
                     timing_at_tpi = self.assignment_matrix[
                         (timing.timepoint, timing.delay)
@@ -877,6 +877,12 @@ class CPSETimepoints(CPSEBaseEngine):
                             if fluent_assignment_var2 is None:
                                 fluent_assignment_var2 = True
 
+                            condition_var1: Union[
+                                cp_model.IntVar, cp_model.NotBooleanVariable, bool
+                            ]
+                            condition_var2: Union[
+                                cp_model.IntVar, cp_model.NotBooleanVariable, bool
+                            ]
                             if e1.is_conditional():
                                 condition_var1 = condition_vars[e1]
                             else:
@@ -947,7 +953,6 @@ class CPSETimepoints(CPSEBaseEngine):
         """
 
         if effect.is_conditional():
-            # TODO: effect conditions can use fluents ?
             if self._fnode_contains_fluents(effect.condition):
                 raise NotImplementedError("Effect conditions must not include fluents.")
             condition_var = self.add_constraint(effect.condition)
@@ -965,11 +970,17 @@ class CPSETimepoints(CPSEBaseEngine):
             value_contains_fluents = self._fnode_contains_fluents(
                 effect.value if value is None else value
             )
-            all_fluent_exps = self.extract_all_parametric_fluent_exp_from_fnode(
-                effect.value if value is None else value
+            all_fluent_exps = list(
+                self.extract_all_parametric_fluent_exp_from_fnode(
+                    effect.value if value is None else value
+                )
             )
-            all_parameters = self.extract_all_params_from_fluent_exps(all_fluent_exps)
-            all_fluent_assignments = [(None, None)]
+            all_parameters = list(
+                self.extract_all_params_from_fluent_exps(all_fluent_exps)
+            )
+            all_fluent_assignments: Iterable[
+                Tuple[Optional[List[FNode]], Optional[List[cp_model.IntVar]]]
+            ] = [(None, None)]
             if len(all_parameters) > 0:
                 all_fluent_assignments = self.get_all_fluent_assignments(
                     all_fluent_exps, all_parameters
@@ -995,7 +1006,7 @@ class CPSETimepoints(CPSEBaseEngine):
                     if effect.is_assignment():
                         resource_equality = resource_var == value_var
                     else:
-                        resource_equality = resource_var == (prev_var + value_var)
+                        resource_equality = resource_var == (prev_var + value_var)  # type: ignore
 
                     constraints: List[cp_model.Constraint] = []
                     if fluent_assignment_var is None:
@@ -1223,9 +1234,11 @@ class CPSETimepoints(CPSEBaseEngine):
             self.model.add(start > end).only_enforce_if(constraint_var.negated())
             return
 
-        all_fluent_exps = self.extract_all_parametric_fluent_exp_from_fnode(fnode)
-        all_parameters = self.extract_all_params_from_fluent_exps(all_fluent_exps)
-        all_fluent_assignments = [(None, [])]
+        all_fluent_exps = list(self.extract_all_parametric_fluent_exp_from_fnode(fnode))
+        all_parameters = list(self.extract_all_params_from_fluent_exps(all_fluent_exps))
+        all_fluent_assignments: Iterable[
+            Tuple[Optional[List[FNode]], List[cp_model.IntVar]]
+        ] = [(None, [])]
         if len(all_parameters) > 0:
             all_fluent_assignments = self.get_all_fluent_assignments(
                 all_fluent_exps, all_parameters
@@ -1257,7 +1270,7 @@ class CPSETimepoints(CPSEBaseEngine):
                         tp_GE_start.negated()
                     )
                     self._variables_cache[tp_GE_start_key] = tp_GE_start
-                tp_GE_start = self._variables_cache[tp_GE_start_key]
+                tp_GE_start = self._variables_cache[tp_GE_start_key]  # type: ignore[assignment]
 
                 tp_LE_end_key = f"{self.timepoints[i].name} <= {repr(end)}"
                 if tp_LE_end_key not in self._variables_cache:
@@ -1267,7 +1280,7 @@ class CPSETimepoints(CPSEBaseEngine):
                         tp_LE_end.negated()
                     )
                     self._variables_cache[tp_LE_end_key] = tp_LE_end
-                tp_LE_end = self._variables_cache[tp_LE_end_key]
+                tp_LE_end = self._variables_cache[tp_LE_end_key]  # type: ignore[assignment]
 
                 # if the next timepoint value is equal then the constraint should not be enforced
                 # because fluent values should be taken from the last timepoint with that value
