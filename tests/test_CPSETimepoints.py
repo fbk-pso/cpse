@@ -15,12 +15,13 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
+from unified_planning.model.scheduling import SchedulingProblem
+from unified_planning.shortcuts import *
+
 from cpse import CPSETimepoints
 
-from unified_planning.shortcuts import *
-from unified_planning.model.scheduling import SchedulingProblem
-
-from .CommonTests import CommonTests, problem
+# `problem` is a pytest fixture; importing it here registers it for this module.
+from .CommonTests import CommonTests, problem  # noqa: F401
 
 
 class TestCPSETimepoints(CommonTests):

@@ -15,19 +15,19 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
-from typing import List, Tuple, Dict, Union
+from typing import Dict, List, Tuple, Union
 
 import unified_planning as up
+from ortools.sat.python import cp_model
 from unified_planning.model import (
-    FNode,
-    timing,
-    ProblemKind,
     Effect,
+    FNode,
+    ProblemKind,
+    timing,
 )
-from unified_planning.model.scheduling import SchedulingProblem, Activity
+from unified_planning.model.scheduling import Activity, SchedulingProblem
 
 from .CPSEBaseEngine import CPSEBaseEngine
-from ortools.sat.python import cp_model
 
 
 class CPSE(CPSEBaseEngine):
@@ -107,7 +107,8 @@ class CPSE(CPSEBaseEngine):
             constraint_var = self.model.add_bool_and([bool_var])
             if len(scope) > 0:
                 constraint_var.only_enforce_if(
-                    self.fnode_to_value_or_variable(fn) for fn in scope  # type: ignore[misc]
+                    self.fnode_to_value_or_variable(fn)  # type: ignore[misc]
+                    for fn in scope
                 )
 
     def add_effects(self, problem: SchedulingProblem):

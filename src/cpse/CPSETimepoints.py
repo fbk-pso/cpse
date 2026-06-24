@@ -15,25 +15,25 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
-from typing import List, Tuple, Union, Dict, Set, Iterable, Optional
 import collections
 import itertools
+from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import unified_planning as up
+from ortools.sat.python import cp_model
 from unified_planning.model import (
-    Parameter,
-    FNode,
-    Fluent,
-    timing,
-    ProblemKind,
     Effect,
+    Fluent,
+    FNode,
     Object,
+    Parameter,
+    ProblemKind,
+    timing,
 )
-from unified_planning.model.scheduling import SchedulingProblem, Activity
-from unified_planning.shortcuts import Plus, Minus
+from unified_planning.model.scheduling import Activity, SchedulingProblem
+from unified_planning.shortcuts import Minus, Plus
 
 from .CPSEBaseEngine import CPSEBaseEngine
-from ortools.sat.python import cp_model
 
 
 class CPSETimepoints(CPSEBaseEngine):
@@ -1150,7 +1150,9 @@ class CPSETimepoints(CPSEBaseEngine):
                         assert (
                             len(fluent_effects[fluent_exp][timing]["non_conditional"])
                             == 1
-                        ), "Multiple effects on the same fluent at the same timepoint are not allowed when an assignment effect is present."
+                        ), (
+                            "Multiple effects on the same fluent at the same timepoint are not allowed when an assignment effect is present."
+                        )
                         self.add_effect(
                             timing,
                             fluent_exp,

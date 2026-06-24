@@ -15,14 +15,14 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
-import pytest
-from typing import List
 from abc import abstractmethod
+from typing import List
 
-from unified_planning.shortcuts import *
-from unified_planning.model.scheduling import SchedulingProblem, Activity
-from unified_planning.engines import PlanGenerationResultStatus, PlanGenerationResult
+import pytest
+from unified_planning.engines import PlanGenerationResult, PlanGenerationResultStatus
+from unified_planning.model.scheduling import Activity, SchedulingProblem
 from unified_planning.plans import Schedule
+from unified_planning.shortcuts import *
 
 
 @pytest.fixture
@@ -44,7 +44,6 @@ def are_activities_overlapped(plan: Schedule, activities: List[Activity]) -> boo
 
 
 class CommonTests:
-
     @abstractmethod
     def engine_name(self) -> str:
         pass

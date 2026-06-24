@@ -15,15 +15,16 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
-from typing import IO, Callable, Optional, List, Tuple, Union, Dict, Any, Set, Iterable
-from abc import abstractmethod
 import collections
-import operator
-import warnings
-import traceback
 import functools
+import operator
+import traceback
+import warnings
+from abc import abstractmethod
+from typing import IO, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import unified_planning as up
+from ortools.sat.python import cp_model
 from unified_planning.engines import (
     Credits,
     PlanGenerationResult,
@@ -31,22 +32,19 @@ from unified_planning.engines import (
 )
 from unified_planning.engines.mixins import OptimalityGuarantee
 from unified_planning.model import (
+    Fluent,
+    FNode,
+    Object,
     OperatorKind,
     Parameter,
-    FNode,
-    timing,
-    ProblemKind,
-    Fluent,
-    Object,
     Presence,
+    ProblemKind,
+    timing,
 )
-from unified_planning.model.scheduling import SchedulingProblem, Activity
 from unified_planning.model.metrics import MinimizeMakespan
-from unified_planning.plans import Schedule
+from unified_planning.model.scheduling import Activity, SchedulingProblem
 from unified_planning.model.types import Type, is_compatible_type
-
-from ortools.sat.python import cp_model
-
+from unified_planning.plans import Schedule
 
 credits = Credits(
     "CPSE",
@@ -802,7 +800,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     continue
 
                 args: List[cp_model.IntVar] = [
-                    results.pop() for arg in fnode.args  # type: ignore[misc]
+                    results.pop()  # type: ignore[misc]
+                    for arg in fnode.args
                 ]
                 bool_var = self.new_bool_var()
                 if fnode.node_type == OperatorKind.AND:
@@ -1046,8 +1045,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 # filter optional activities not present in the plan
                 activities = list(
                     filter(
-                        lambda act: not act.optional
-                        or assignment[act.present.presence()],
+                        lambda act: (
+                            not act.optional or assignment[act.present.presence()]
+                        ),
                         problem.activities,
                     )
                 )
