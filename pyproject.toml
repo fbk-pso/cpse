@@ -1,24 +1,73 @@
-[build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "cpse"
 version = "0.1.0"
-requires-python = ">=3.10"
-dependencies = [
-    "ortools==9.12.4544",
-    "unified-planning"
-]
-authors = []
 description = "Constraint Programming Scheduling Engine"
 readme = "README.md"
+requires-python = ">=3.10"
 license = "LGPL-3.0-only"
 license-files = ["LICENSE"]
+authors = [
+    { name = "FBK PSO Unit", email = "pso-tools@fbk.eu" },
+]
+urls = { "Homepage" = "https://github.com/fbk-pso/cpse" }
+dependencies = [
+    "ortools==9.12.4544",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest==8.3.5",
-    "black==25.12.0",
-    "mypy==1.19.1"
+    "mypy==1.19.1",
+    "ruff==0.15.18",
+    "pre-commit==4.6.0",
+    "unified-planning>=1.3.0.445.dev1",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cpse"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/cpse", "README.md", "LICENSE"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line length handled by formatter
+    "E402",  # module-import-not-at-top — used intentionally in places
+    "E712",  # `v == True` distinguishes a literal bool from other values
+    "E722",  # bare-except — tolerated in a solver-cleanup path
+    "E731",  # lambda-assignment — tolerated
+    "E741",  # ambiguous variable name (l, O, I) — tolerated in math-heavy code
+    "F402",  # `timing` import intentionally shadowed by loop variables
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]
+"tests/**" = ["F811", "F403", "F405", "F841"]  # test fixtures create unused locals for their side effects
+
+[tool.ruff.format]
+
+[tool.mypy]
+check_untyped_defs = true
+disable_error_code = ["no-redef"]
+files = ["src/cpse"]
+
+[[tool.mypy.overrides]]
+module = ["unified_planning.*"]
+ignore_missing_imports = true
