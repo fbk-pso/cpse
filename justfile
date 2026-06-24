@@ -13,13 +13,13 @@ test:
 
 # Run all lint and formatting checks. Fails if any issues are found.
 lint:
-    uv run ruff check src tests
-    uv run ruff format --check src tests
+    uv run ruff check src tests ci
+    uv run ruff format --check src tests ci
 
 # Apply the formatter and auto-fix lint issues where possible
 format:
-    uv run ruff format src tests
-    uv run ruff check --fix src tests
+    uv run ruff format src tests ci
+    uv run ruff check --fix src tests ci
 
 # Static type checking
 typecheck:
