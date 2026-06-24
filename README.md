@@ -69,6 +69,35 @@ with OneshotPlanner(name="cpse", params=params) as planner:
 **Tip**: Adjusting these bounds can help restrict variable domains or improve solver performance for specific scheduling problems.
 
 
+## Development
+
+CPSE uses [uv](https://docs.astral.sh/uv/) to manage the environment and
+[just](https://github.com/casey/just) as a task runner. After cloning:
+
+```bash
+just install        # uv sync — create .venv from uv.lock
+```
+
+Common tasks:
+
+```bash
+just test           # run the pytest suite
+just lint           # ruff lint + format checks
+just format         # auto-fix lint issues and format
+just typecheck      # mypy
+just precommit      # run all pre-commit hooks against the whole repo
+just build          # build sdist + wheel into ./dist/
+```
+
+Install the git hook so the checks run automatically on each commit:
+
+```bash
+uv run pre-commit install
+```
+
+Running `just --list` shows all available recipes.
+
+
 ## References
 
 CPSE has been used in the following research paper:
