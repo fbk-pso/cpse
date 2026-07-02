@@ -15,10 +15,15 @@ CPSE offers two scheduling engines, each supporting different problem kinds:
 
 ## Installation
 
-CPSE is not yet available on PyPI, but you can install it directly from the source repository. The required Google OR-Tools package will be installed automatically.
+```bash
+pip install up-cpse
+```
+
+To try the latest unreleased build, install a wheel directly from the rolling
+[`dev` pre-release](https://github.com/fbk-pso/cpse/releases/tag/dev):
 
 ```bash
-pip install git+https://github.com/fbk-pso/cpse.git
+pip install --pre <url-of-wheel-on-dev-release>
 ```
 
 

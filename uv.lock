@@ -74,35 +74,6 @@ wheels = [
 ]
 
 [[package]]
-name = "cpse"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "ortools" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "unified-planning" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "ortools", specifier = "==9.12.4544" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = "==1.19.1" },
-    { name = "pre-commit", specifier = "==4.6.0" },
-    { name = "pytest", specifier = "==8.3.5" },
-    { name = "ruff", specifier = "==0.15.18" },
-    { name = "unified-planning", specifier = ">=1.3.0.445.dev1" },
-]
-
-[[package]]
 name = "distlib"
 version = "0.4.3"
 source = { registry = "https://pypi.org/simple" }
@@ -1262,6 +1233,35 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6e/47/5e453966fa99f3ed0303009c48d18cbed8d86c8b1c6bc7bb549e4c1c7fd2/unified_planning-1.3.0.445.dev1.tar.gz", hash = "sha256:51475d7d6d6e088ae8a81dd2fab8cbfbfa005e2ce146e55892763f5ab077146a", size = 586049, upload-time = "2026-06-09T16:10:37.023Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9e/81/2a94cf5ea02b894cef4c2cdaf76ef1a943fc0b42c1acf3e58162da9b21a1/unified_planning-1.3.0.445.dev1-py3-none-any.whl", hash = "sha256:6f0f478304a65cc02c727568fcb881525a3e9e82eb3aae27ee2484a923fae51e", size = 837952, upload-time = "2026-06-09T16:10:35.213Z" },
+]
+
+[[package]]
+name = "up-cpse"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "ortools" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "unified-planning" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "ortools", specifier = "==9.12.4544" }]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = "==1.19.1" },
+    { name = "pre-commit", specifier = "==4.6.0" },
+    { name = "pytest", specifier = "==8.3.5" },
+    { name = "ruff", specifier = "==0.15.18" },
+    { name = "unified-planning", specifier = ">=1.3.0.445.dev1" },
 ]
 
 [[package]]
