@@ -185,7 +185,7 @@ class CommonTests:
         assert (activity2_start - 3) <= activity1_start
         assert activity1_end <= (activity2_end + 3)
 
-    @pytest.mark.skip(reason="ortools 9.12.4544: solver takes too long")
+    @pytest.mark.skip(reason="ortools solver takes too long")
     def test_set_fluent_initial_value(self, problem: SchedulingProblem):
         resource = problem.add_resource("resource", capacity=2)
         problem.set_initial_value(resource, 1)
@@ -479,7 +479,7 @@ class CommonTests:
 
         self.problem_solved_satisficing_or_optimally(problem)
 
-    @pytest.mark.skip(reason="ortools 9.12.4544: solver takes too long")
+    @pytest.mark.skip(reason="ortools solver takes too long")
     def test_fluent_set_initial_value(self, problem: SchedulingProblem):
         fluent = problem.add_fluent(
             "fluent",

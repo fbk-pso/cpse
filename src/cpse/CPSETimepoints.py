@@ -1069,22 +1069,18 @@ class CPSETimepoints(CPSEBaseEngine):
 
                     else:
                         if effect.is_conditional():
-                            c1 = self.model.add(resource_equality).only_enforce_if(
-                                [condition_var, fluent_assignment_var]
-                            )
-                            c2 = self.model.add(
-                                resource_var == prev_var
-                            ).only_enforce_if(
+                            c1 = self.model.add(resource_equality)
+                            c1.only_enforce_if([condition_var, fluent_assignment_var])
+                            c2 = self.model.add(resource_var == prev_var)
+                            c2.only_enforce_if(
                                 [condition_var, fluent_assignment_var.negated()]
                             )
-                            c3 = self.model.add(
-                                resource_var == prev_var
-                            ).only_enforce_if(
+                            c3 = self.model.add(resource_var == prev_var)
+                            c3.only_enforce_if(
                                 [condition_var.negated(), fluent_assignment_var]
                             )
-                            c4 = self.model.add(
-                                resource_var == prev_var
-                            ).only_enforce_if(
+                            c4 = self.model.add(resource_var == prev_var)
+                            c4.only_enforce_if(
                                 [
                                     condition_var.negated(),
                                     fluent_assignment_var.negated(),
@@ -1094,11 +1090,11 @@ class CPSETimepoints(CPSEBaseEngine):
 
                         else:
                             c1 = self.model.add(resource_equality).only_enforce_if(
-                                [fluent_assignment_var]
+                                fluent_assignment_var
                             )
                             c2 = self.model.add(
                                 resource_var == prev_var
-                            ).only_enforce_if([fluent_assignment_var.negated()])
+                            ).only_enforce_if(fluent_assignment_var.negated())
                             constraints = [c1, c2]
 
                     for constraint in constraints:
