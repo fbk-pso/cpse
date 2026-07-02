@@ -59,12 +59,13 @@ jobs:
       - name: Sync environment
         run: uv sync --frozen --python ${{ inputs.python-version }}
 
-      # unified-planning is installed from PyPI (dev group); its up_test_cases/
-      # are not shipped on PyPI, so clone the repo (master) to run report.py.
-      - name: Clone unified-planning test cases (master)
+      - name: Clone unified-planning test cases (matching the locked commit)
         run: |
-          git clone --filter=blob:none --single-branch --branch master \
-            https://github.com/aiplan4eu/unified-planning.git up-checkout
+          # Use system python3 (>= 3.11) instead of `uv run python` so this
+          # step works on the 3.10 matrix entry where tomllib is missing.
+          sha=$(python3 -c "import tomllib; d = tomllib.load(open('uv.lock', 'rb')); print(next(p['source']['git'].rsplit('#', 1)[1] for p in d['package'] if p['name'] == 'unified-planning'))")
+          git clone --filter=blob:none https://github.com/aiplan4eu/unified-planning.git up-checkout
+          git -C up-checkout checkout "$sha"
 
       - name: Register CPSE engines
         run: |

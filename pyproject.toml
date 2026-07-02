@@ -27,7 +27,7 @@ dev = [
     "mypy==1.19.1",
     "ruff==0.15.18",
     "pre-commit==4.6.0",
-    "unified-planning>=1.3.0.445.dev1",
+    "unified-planning @ git+https://github.com/aiplan4eu/unified-planning.git",
 ]
 
 [build-system]

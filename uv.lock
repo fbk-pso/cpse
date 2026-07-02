@@ -1222,17 +1222,13 @@ wheels = [
 [[package]]
 name = "unified-planning"
 version = "1.3.0.445.dev1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/aiplan4eu/unified-planning.git#33bfd648ac7a8c013a1cb17865a39c535484992a" }
 dependencies = [
     { name = "configspace" },
     { name = "networkx", version = "3.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "networkx", version = "3.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pddl" },
     { name = "pyparsing" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/6e/47/5e453966fa99f3ed0303009c48d18cbed8d86c8b1c6bc7bb549e4c1c7fd2/unified_planning-1.3.0.445.dev1.tar.gz", hash = "sha256:51475d7d6d6e088ae8a81dd2fab8cbfbfa005e2ce146e55892763f5ab077146a", size = 586049, upload-time = "2026-06-09T16:10:37.023Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9e/81/2a94cf5ea02b894cef4c2cdaf76ef1a943fc0b42c1acf3e58162da9b21a1/unified_planning-1.3.0.445.dev1-py3-none-any.whl", hash = "sha256:6f0f478304a65cc02c727568fcb881525a3e9e82eb3aae27ee2484a923fae51e", size = 837952, upload-time = "2026-06-09T16:10:35.213Z" },
 ]
 
 [[package]]
@@ -1261,7 +1257,7 @@ dev = [
     { name = "pre-commit", specifier = "==4.6.0" },
     { name = "pytest", specifier = "==8.3.5" },
     { name = "ruff", specifier = "==0.15.18" },
-    { name = "unified-planning", specifier = ">=1.3.0.445.dev1" },
+    { name = "unified-planning", git = "https://github.com/aiplan4eu/unified-planning.git" },
 ]
 
 [[package]]

@@ -145,8 +145,9 @@ UP repository for its `up_test_cases/` package (not shipped on PyPI), register
 both engines, and run `report.py`:
 
 ```bash
-git clone --filter=blob:none --single-branch --branch master \
-  https://github.com/aiplan4eu/unified-planning.git up-checkout
+sha=$(python3 -c "import tomllib; d = tomllib.load(open('uv.lock', 'rb')); print(next(p['source']['git'].rsplit('#', 1)[1] for p in d['package'] if p['name'] == 'unified-planning'))")
+git clone --filter=blob:none https://github.com/aiplan4eu/unified-planning.git up-checkout
+git -C up-checkout checkout "$sha"
 printf '[engine cpse]\nmodule_name: cpse\nclass_name: CPSE\n\n[engine cpse-timepoints]\nmodule_name: cpse\nclass_name: CPSETimepoints\n' > .up.ini
 uv run python up-checkout/up_test_cases/report.py cpse
 uv run python up-checkout/up_test_cases/report.py cpse-timepoints
