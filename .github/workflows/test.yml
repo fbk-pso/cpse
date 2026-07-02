@@ -77,6 +77,4 @@ jobs:
         run: uv run python up-checkout/up_test_cases/report.py cpse-timepoints
 
       - name: Run CPSE pytest suite
-        env:
-          PYTHONPATH: up-checkout/up_test_cases
         run: just test

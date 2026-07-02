@@ -15,6 +15,10 @@ updates:
     labels:
       - "dependencies"
       - "python"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
 
   # Pinned action versions in .github/workflows/. Batched into a single PR per
   # week to cut review noise.
