@@ -107,7 +107,7 @@ CPSE has been used in the following research paper:
 
 ## License
 
-CPSE is released under the GNU Lesser General Public License v3.0 (LGPL-3.0).
+CPSE is released under the GNU General Public License v3.0 (GPL-3.0).
 See the `LICENSE` file for full details.
 
 

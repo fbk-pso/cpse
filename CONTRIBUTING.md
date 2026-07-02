@@ -86,7 +86,7 @@ Before your first contribution can be merged, you must sign the
 
 - [CLA text](https://gist.github.com/DavideLusuardi/e6ccb79d334cf5c49058c4577f2b9800)
 
-CPSE is released under LGPL-3.0; the CLA
+CPSE is released under [GPL-3.0](LICENSE); the CLA
 defines the licence terms under which you grant FBK the right to use
 your contributions across all `fbk-pso` open-source projects.
 On your first PR, the [cla-assistant](https://cla-assistant.io/) bot

@@ -2,16 +2,16 @@
 # This file is part of CPSE.
 #
 # CPSE is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Lesser General Public License as published by
+# it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
 # CPSE is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Lesser General Public License for more details.
+# GNU General Public License for more details.
 #
-# You should have received a copy of the GNU Lesser General Public License
+# You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
@@ -51,7 +51,7 @@ credits = Credits(
     "FBK PSO Unit",
     "etosello@fbk.eu",
     "https://github.com/fbk-pso/cpse",
-    "LGPLv3",
+    "GPLv3",
     "CPSE is a scheduling engine that encodes scheduling problems as constraint satisfaction models.",
     "CPSE (Constraint Programming Scheduling Engine) is a scheduling engine that encodes scheduling problems as constraint satisfaction models and solves them using the CP-SAT solver from Google OR-Tools.",
 )
