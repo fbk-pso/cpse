@@ -82,9 +82,7 @@ Typo fixes and minor documentation changes can skip the first step.
 ## Contributor License Agreement (CLA)
 
 Before your first contribution can be merged, you must sign the
-**FBK PSO Unit Individual Contributor License Agreement**:
-
-- [CLA text](https://gist.github.com/DavideLusuardi/e6ccb79d334cf5c49058c4577f2b9800)
+[**FBK PSO Unit Individual Contributor License Agreement**](https://gist.github.com/alvalentini/a8c5e371be4e7e43b79035c67dc2a1ac).
 
 CPSE is released under [GPL-3.0](LICENSE); the CLA
 defines the licence terms under which you grant FBK the right to use
