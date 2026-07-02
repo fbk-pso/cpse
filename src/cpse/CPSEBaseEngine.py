@@ -49,7 +49,7 @@ from unified_planning.plans import Schedule
 credits = Credits(
     "CPSE",
     "FBK PSO Unit",
-    "etosello@fbk.eu",
+    "pso-tools@fbk.eu",
     "https://github.com/fbk-pso/cpse",
     "GPLv3",
     "CPSE is a scheduling engine that encodes scheduling problems as constraint satisfaction models.",
