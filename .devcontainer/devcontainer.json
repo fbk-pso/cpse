@@ -4,10 +4,15 @@
     "features": {
         "ghcr.io/devcontainers/features/node:1": {
             "version": "lts"
-        }
+        },
+        "ghcr.io/va-h/devcontainers-features/uv:1": {
+            "version": "latest"
+        },
+        "ghcr.io/guiyomh/features/just:0": {}
     },
     "mounts": [
-        "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
+        "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+        "source=cpse-venv,target=${containerWorkspaceFolder}/.venv,type=volume"
     ],
     "customizations": {
         "vscode": {
@@ -32,6 +37,6 @@
         "DISABLE_AUTOUPDATER": "1",
         "CLAUDE_ACCEPT_DEFAULTS": "true"
     },
-    "postCreateCommand": "npm install -g @anthropic-ai/claude-code",
+    "postCreateCommand": "sudo chown vscode:vscode .venv && just install && printf '[engine cpse]\\nmodule_name: cpse\\nclass_name: CPSE\\n\\n[engine cpse-timepoints]\\nmodule_name: cpse\\nclass_name: CPSETimepoints\\n' > ~/.up.ini && npm install -g @anthropic-ai/claude-code",
     "remoteUser": "vscode"
 }
