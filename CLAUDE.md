@@ -94,8 +94,7 @@ import needed in the test files.
   (`[dependency-groups] dev` in `pyproject.toml`), and is pinned
   `>=1.3.0.445.dev1` — the `cpse` engine needs optional-activities support
   (`Presence`) that is not in a stable PyPI UP release.
-- **ortools is pinned** to `9.12.4544`; supported Python is **3.10–3.13** (no
-  3.14 wheels for this ortools).
+- **ortools is pinned** to `>=9.15,<9.16`; supported Python is **3.10–3.14**.
 - Formatting/linting is **ruff** (line length 88); type checking is **mypy**,
   configured in `pyproject.toml`. Four tests are `@pytest.mark.skip`-ed because
   CP-SAT is too slow on them with the pinned ortools.
