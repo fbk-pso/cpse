@@ -48,7 +48,7 @@ class CPSE(CPSEBaseEngine):
 
     @staticmethod
     def supports(problem_kind: ProblemKind) -> bool:
-        return problem_kind <= CPSE.supported_kind()
+        return bool(problem_kind <= CPSE.supported_kind())
 
     def check_if_supported_problem(self, problem: "up.model.AbstractProblem"):
         """
@@ -101,10 +101,7 @@ class CPSE(CPSEBaseEngine):
             constraint_var = self.model.add_bool_and([bool_var])
             if len(scope) > 0:
                 constraint_var.only_enforce_if(
-                    [
-                        self.fnode_to_value_or_variable(fn)  # type: ignore[misc]
-                        for fn in scope
-                    ]
+                    [self.fnode_to_value_or_variable(fn) for fn in scope]
                 )
 
     def add_effects(self, problem: SchedulingProblem):

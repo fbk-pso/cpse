@@ -85,7 +85,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
     @staticmethod
     def supports(problem_kind: ProblemKind) -> bool:
-        return problem_kind <= CPSETimepoints.supported_kind()
+        return bool(problem_kind <= CPSETimepoints.supported_kind())
 
     def check_if_supported_problem(self, problem: "up.model.AbstractProblem"):
         """

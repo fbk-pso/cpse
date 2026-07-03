@@ -140,7 +140,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     @staticmethod
     def satisfies(optimality_guarantee: OptimalityGuarantee) -> bool:
-        return optimality_guarantee == OptimalityGuarantee.SATISFICING
+        return bool(optimality_guarantee == OptimalityGuarantee.SATISFICING)
 
     @staticmethod
     def supported_kind() -> ProblemKind:
@@ -779,7 +779,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             # check if fnode cached
             if cache_enabled and not processed and repr(fnode) in self._variables_cache:
-                results.append(self._variables_cache[repr(fnode)])  # type: ignore[arg-type]
+                results.append(self._variables_cache[repr(fnode)])
 
             elif fnode.node_type in [
                 OperatorKind.PARAM_EXP,
@@ -844,7 +844,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                         bool_var.negated()
                     )
 
-                results.append(bool_var)  # type: ignore[arg-type]
+                results.append(bool_var)
                 if cache_enabled:
                     self._variables_cache[repr(fnode)] = bool_var
 
@@ -872,7 +872,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                         bool_var.negated()
                     )
 
-                results.append(bool_var)  # type: ignore[arg-type]
+                results.append(bool_var)
                 if cache_enabled:
                     self._variables_cache[repr(fnode)] = bool_var
 
