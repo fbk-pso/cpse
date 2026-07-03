@@ -2,25 +2,26 @@
 # This file is part of CPSE.
 #
 # CPSE is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Lesser General Public License as published by
+# it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
 # CPSE is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Lesser General Public License for more details.
+# GNU General Public License for more details.
 #
-# You should have received a copy of the GNU Lesser General Public License
+# You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
+from unified_planning.model.scheduling import SchedulingProblem
+from unified_planning.shortcuts import *
+
 from cpse import CPSE
 
-from unified_planning.shortcuts import *
-from unified_planning.model.scheduling import SchedulingProblem
-
-from .CommonTests import CommonTests, problem
+# `problem` is a pytest fixture; importing it here registers it for this module.
+from .CommonTests import CommonTests, problem  # noqa: F401
 
 
 class TestCPSE(CommonTests):
@@ -193,8 +194,8 @@ class TestCPSE(CommonTests):
 
     def test_not_supported_fluent_with_parameters(self, problem: SchedulingProblem):
         user_type = UserType("user_type")
-        o1 = problem.add_object("o1", user_type)
-        o2 = problem.add_object("o2", user_type)
+        problem.add_object("o1", user_type)
+        problem.add_object("o2", user_type)
         parameter = problem.add_variable("parameter", user_type)
         fluent = problem.add_fluent(
             "fluent", IntType(), obj=user_type, default_initial_value=0

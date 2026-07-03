@@ -15,10 +15,15 @@ CPSE offers two scheduling engines, each supporting different problem kinds:
 
 ## Installation
 
-CPSE is not yet available on PyPI, but you can install it directly from the source repository. The required Google OR-Tools package will be installed automatically.
+```bash
+pip install up-cpse
+```
+
+To try the latest unreleased build, install a wheel directly from the rolling
+[`dev` pre-release](https://github.com/fbk-pso/cpse/releases/tag/dev):
 
 ```bash
-pip install git+https://github.com/fbk-pso/cpse.git
+pip install --pre <url-of-wheel-on-dev-release>
 ```
 
 
@@ -69,6 +74,35 @@ with OneshotPlanner(name="cpse", params=params) as planner:
 **Tip**: Adjusting these bounds can help restrict variable domains or improve solver performance for specific scheduling problems.
 
 
+## Development
+
+CPSE uses [uv](https://docs.astral.sh/uv/) to manage the environment and
+[just](https://github.com/casey/just) as a task runner. After cloning:
+
+```bash
+just install        # uv sync — create .venv from uv.lock
+```
+
+Common tasks:
+
+```bash
+just test           # run the pytest suite
+just lint           # ruff lint + format checks
+just format         # auto-fix lint issues and format
+just typecheck      # mypy
+just precommit      # run all pre-commit hooks against the whole repo
+just build          # build sdist + wheel into ./dist/
+```
+
+Install the git hook so the checks run automatically on each commit:
+
+```bash
+uv run pre-commit install
+```
+
+Running `just --list` shows all available recipes.
+
+
 ## References
 
 CPSE has been used in the following research paper:
@@ -78,10 +112,10 @@ CPSE has been used in the following research paper:
 
 ## License
 
-CPSE is released under the GNU Lesser General Public License v3.0 (LGPL-3.0).
+CPSE is released under the GNU General Public License v3.0 (GPL-3.0).
 See the `LICENSE` file for full details.
 
 
 ## Contact
 
-For questions, bug reports, or contributions, please open an issue on GitHub or contact the authors.
+For questions, bug reports, or contributions, please open an issue on GitHub or contact the authors at <pso-tools@fbk.eu>.

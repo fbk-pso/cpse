@@ -2,27 +2,27 @@
 # This file is part of CPSE.
 #
 # CPSE is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Lesser General Public License as published by
+# it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
 # CPSE is distributed in the hope that it will be useful,
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Lesser General Public License for more details.
+# GNU General Public License for more details.
 #
-# You should have received a copy of the GNU Lesser General Public License
+# You should have received a copy of the GNU General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
-import pytest
-from typing import List
 from abc import abstractmethod
+from typing import List
 
-from unified_planning.shortcuts import *
-from unified_planning.model.scheduling import SchedulingProblem, Activity
-from unified_planning.engines import PlanGenerationResultStatus, PlanGenerationResult
+import pytest
+from unified_planning.engines import PlanGenerationResult, PlanGenerationResultStatus
+from unified_planning.model.scheduling import Activity, SchedulingProblem
 from unified_planning.plans import Schedule
+from unified_planning.shortcuts import *
 
 
 @pytest.fixture
@@ -44,7 +44,6 @@ def are_activities_overlapped(plan: Schedule, activities: List[Activity]) -> boo
 
 
 class CommonTests:
-
     @abstractmethod
     def engine_name(self) -> str:
         pass
@@ -497,7 +496,7 @@ class CommonTests:
     def test_bool_fluent_with_constant_value(self, problem: SchedulingProblem):
         fluent = problem.add_fluent("fluent", default_initial_value=True)
         problem.set_initial_value(fluent, False)
-        activity = problem.add_activity("activity", duration=5)
+        problem.add_activity("activity", duration=5)
         self.problem_solved_satisficing_or_optimally(problem)
 
     def test_fluent_with_args(self, problem: SchedulingProblem):
@@ -519,7 +518,7 @@ class CommonTests:
         self.problem_solved_satisficing_or_optimally(problem)
 
     def test_constraint_with_constant_bool(self, problem: SchedulingProblem):
-        activity = problem.add_activity("activity", 1)
+        problem.add_activity("activity", 1)
         bool_var = problem.add_variable("bool_var", BoolType())
 
         problem.add_constraint(True)

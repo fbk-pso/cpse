@@ -1,24 +1,64 @@
-[build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "cpse"
+name = "up-cpse"
 version = "0.1.0"
-requires-python = ">=3.10"
-dependencies = [
-    "ortools==9.12.4544",
-    "unified-planning"
-]
-authors = []
 description = "Constraint Programming Scheduling Engine"
 readme = "README.md"
-license = "LGPL-3.0-only"
+requires-python = ">=3.10"
+license = "GPL-3.0-only"
 license-files = ["LICENSE"]
+authors = [
+    { name = "FBK PSO Unit", email = "pso-tools@fbk.eu" },
+]
+urls = { "Homepage" = "https://github.com/fbk-pso/cpse" }
+dependencies = [
+    "ortools==9.12.4544",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest==8.3.5",
-    "black==25.12.0",
-    "mypy==1.19.1"
+    "mypy==1.19.1",
+    "ruff==0.15.18",
+    "pre-commit==4.6.0",
+    "unified-planning @ git+https://github.com/aiplan4eu/unified-planning.git",
 ]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cpse"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/cpse", "README.md", "LICENSE"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests", "ci"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# The test suite relies on `from unified_planning.shortcuts import *` (that module
+# is intended to be star-imported), and pytest fixtures used as test-method
+# arguments trip F811 against the fixture import (a false positive).
+"tests/*" = ["F403", "F405", "F811"]
+
+[tool.mypy]
+check_untyped_defs = true
+disable_error_code = ["no-redef"]
+files = ["src/cpse"]
+
+[[tool.mypy.overrides]]
+module = ["unified_planning.*"]
+ignore_missing_imports = true
