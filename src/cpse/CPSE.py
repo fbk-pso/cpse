@@ -75,11 +75,11 @@ class CPSE(CPSEBaseEngine):
                 problem.all_effects(),
             )
         )
-        for fnode, scope in problem.all_scoped_constraints():
+        for fnode, _scope in problem.all_scoped_constraints():
             parametric_fluent_exps += list(
                 self.extract_all_parametric_fluent_exp_from_fnode(fnode)
             )
-        for time_interval, fnode, activity in problem.all_conditions():
+        for _time_interval, fnode, _activity in problem.all_conditions():
             parametric_fluent_exps += list(
                 self.extract_all_parametric_fluent_exp_from_fnode(fnode)
             )

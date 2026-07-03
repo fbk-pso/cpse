@@ -263,7 +263,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         )
         return bool_var
 
-    @functools.cache
+    @functools.cache  # noqa: B019
     def _fnode_contains_fluents(self, fnode: FNode) -> bool:
         """
         Checks if the specified FNode contains any fluent.
@@ -282,8 +282,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 return True
 
             if len(fnode.args) > 0:
-                for arg in fnode.args:
-                    stack.append(arg)
+                stack.extend(fnode.args)
 
         return False
 
@@ -323,8 +322,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             if fnode.is_fluent_exp():
                 all_fluent_exps.add(fnode)
             elif len(fnode.args) > 0:
-                for arg in fnode.args:
-                    stack.append(arg)
+                stack.extend(fnode.args)
 
         return all_fluent_exps
 
@@ -735,8 +733,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             elif fnode.node_type in _ARITHMETIC_OPERATOR_MAP:
                 if not processed:
                     stack.append((fnode, True))
-                    for arg in fnode.args:
-                        stack.append((arg, False))
+                    stack.extend((arg, False) for arg in fnode.args)
                 else:
                     op = _ARITHMETIC_OPERATOR_MAP[fnode.node_type]
                     args = [results.pop() for arg in fnode.args]
@@ -814,8 +811,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             ]:
                 if not processed:
                     stack.append((fnode, True))
-                    for arg in fnode.args:
-                        stack.append((arg, False))
+                    stack.extend((arg, False) for arg in fnode.args)
                     continue
 
                 args: list[cp_model.IntVar] = [
@@ -856,8 +852,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 if not processed:
                     assert len(fnode.args) == 2
                     stack.append((fnode, True))
-                    for arg in fnode.args:
-                        stack.append((arg, False))
+                    stack.extend((arg, False) for arg in fnode.args)
                     continue
 
                 args: list[cp_model.IntVar] = [results.pop() for arg in fnode.args]
@@ -961,7 +956,11 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             self.check_if_supported_problem(problem)
 
             if heuristic is not None:
-                warnings.warn("CPSE does not support custom heuristics", UserWarning)
+                # stacklevel=2 targets _solve's caller; it can't reliably reach user
+                # code through UP's solve() wrapper, so don't bump it.
+                warnings.warn(
+                    "CPSE does not support custom heuristics", UserWarning, stacklevel=2
+                )
 
             self.model.name = problem.name
 
