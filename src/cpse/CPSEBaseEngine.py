@@ -21,7 +21,8 @@ import operator
 import traceback
 import warnings
 from abc import abstractmethod
-from typing import IO, Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
+from collections.abc import Callable, Iterable
+from typing import IO, Optional
 
 import unified_planning as up
 from ortools.sat.python import cp_model
@@ -105,35 +106,33 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     def solve_init(self):
         self.model = cp_model.CpModel()
-        self.objects: Dict[Object, int] = {}
+        self.objects: dict[Object, int] = {}
 
         # dictionary of activities keyed by name
-        self._activities: Dict[str, activity_type] = {}
+        self._activities: dict[str, activity_type] = {}
         # mapping timepoints, parameters and fluents to the corresponding integer
         # variables in the model
-        self._model_vars: Dict[
-            Union[timing.Timepoint, Parameter, Fluent, Presence],
-            Union[cp_model.IntVar, int],
+        self._model_vars: dict[
+            timing.Timepoint | Parameter | Fluent | Presence,
+            cp_model.IntVar | int,
         ] = {}
         # mapping fluent to its lower bound and upper bound
-        self._fluent_bounds: Dict[str, Tuple[int, int]] = {}
+        self._fluent_bounds: dict[str, tuple[int, int]] = {}
         # mapping fluent expression to its initial value expression
-        self._fluent_initial_value: Dict[FNode, FNode] = {}
+        self._fluent_initial_value: dict[FNode, FNode] = {}
         # mapping types to objects/parameters
-        self._type_objects_mapping: Dict[Type, List[Object]] = {}
-        self._type_params_mapping: Dict[Type, List[Parameter]] = {}
+        self._type_objects_mapping: dict[Type, list[Object]] = {}
+        self._type_params_mapping: dict[Type, list[Parameter]] = {}
 
         # constraints to be applied just before solving the problem
-        self._postponed_constraints: List[Callable] = []
+        self._postponed_constraints: list[Callable] = []
 
         # counters for generating anonymous variables
         self._bool_var_counter: int = -1
         self._int_var_counter: int = -1
 
         # cache model variables accessed multiple times
-        self._variables_cache: Dict[
-            str, Union[cp_model.IntVar, cp_model.IntervalVar]
-        ] = {}
+        self._variables_cache: dict[str, cp_model.IntVar | cp_model.IntervalVar] = {}
 
     @staticmethod
     def get_credits(**kwargs) -> Optional["Credits"]:
@@ -141,7 +140,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     @staticmethod
     def satisfies(optimality_guarantee: OptimalityGuarantee) -> bool:
-        return optimality_guarantee == OptimalityGuarantee.SATISFICING
+        return bool(optimality_guarantee == OptimalityGuarantee.SATISFICING)
 
     @staticmethod
     def supported_kind() -> ProblemKind:
@@ -212,8 +211,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         )
 
     def bool_and_expression(
-        self, bool_vars: List[Union[cp_model.IntVar, cp_model.NotBooleanVariable]]
-    ) -> Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
+        self, bool_vars: list[cp_model.IntVar | cp_model.NotBooleanVariable]
+    ) -> cp_model.IntVar | cp_model.NotBooleanVariable:
         """
         Creates a boolean variable representing the logical AND of the given boolean
         variables.
@@ -239,8 +238,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         return bool_var
 
     def bool_or_expression(
-        self, bool_vars: List[Union[cp_model.IntVar, cp_model.NotBooleanVariable]]
-    ) -> Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
+        self, bool_vars: list[cp_model.IntVar | cp_model.NotBooleanVariable]
+    ) -> cp_model.IntVar | cp_model.NotBooleanVariable:
         """
         Creates a boolean variable representing the logical OR of the given boolean
         variables.
@@ -264,7 +263,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         )
         return bool_var
 
-    @functools.cache
+    @functools.cache  # noqa: B019
     def _fnode_contains_fluents(self, fnode: FNode) -> bool:
         """
         Checks if the specified FNode contains any fluent.
@@ -283,8 +282,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 return True
 
             if len(fnode.args) > 0:
-                for arg in fnode.args:
-                    stack.append(arg)
+                stack.extend(fnode.args)
 
         return False
 
@@ -302,7 +300,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         assert fluent_exp.is_fluent_exp()
         return any(arg.is_parameter_exp() for arg in fluent_exp.args)
 
-    def extract_all_fluent_exp_from_fnode(self, fnode: FNode) -> Set[FNode]:
+    def extract_all_fluent_exp_from_fnode(self, fnode: FNode) -> set[FNode]:
         """
         Extracts all fluent expressions from the given FNode.
 
@@ -324,12 +322,11 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             if fnode.is_fluent_exp():
                 all_fluent_exps.add(fnode)
             elif len(fnode.args) > 0:
-                for arg in fnode.args:
-                    stack.append(arg)
+                stack.extend(fnode.args)
 
         return all_fluent_exps
 
-    def extract_all_parametric_fluent_exp_from_fnode(self, fnode: FNode) -> Set[FNode]:
+    def extract_all_parametric_fluent_exp_from_fnode(self, fnode: FNode) -> set[FNode]:
         """
         Extracts all fluent expressions with parameters from the given FNode.
 
@@ -353,7 +350,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     def extract_all_params_from_fluent_exps(
         self, fluent_exps: Iterable[FNode]
-    ) -> Set[Parameter]:
+    ) -> set[Parameter]:
         """
         Extracts all parameters from the given fluent expressions.
 
@@ -393,7 +390,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     def _get_timeinterval_lower_upper_bounds(
         self, time_interval: timing.TimeInterval
-    ) -> Tuple[cp_model.LinearExprT, cp_model.LinearExprT]:
+    ) -> tuple[cp_model.LinearExprT, cp_model.LinearExprT]:
         """
         Returns the linear expressions representing the lower and upper
         bounds of the specified time interval in the model
@@ -428,7 +425,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         return lower, upper
 
-    def _get_lower_upper_bounds(self, fluent: Fluent) -> Tuple[int, int]:
+    def _get_lower_upper_bounds(self, fluent: Fluent) -> tuple[int, int]:
         """
         Determines the lower and upper bounds for a given fluent based on its type.
 
@@ -551,7 +548,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 assert present_exp not in self._model_vars
                 self._model_vars[present_exp] = var
 
-    def _get_compatible_objects(self, type: Type) -> List[Object]:
+    def _get_compatible_objects(self, type: Type) -> list[Object]:
         """
         Retrieves a list of objects that are compatible with the specified type.
 
@@ -569,7 +566,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 objects += self._type_objects_mapping[other_type]
         return objects
 
-    def _get_compatible_parameters(self, type: Type) -> List[Parameter]:
+    def _get_compatible_parameters(self, type: Type) -> list[Parameter]:
         """
         Retrieves a list of parameters that are compatible with the specified type.
 
@@ -589,7 +586,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     def _add_activity_timepoints(
         self, activity: Activity
-    ) -> Tuple[cp_model.IntVar, Union[int, cp_model.IntVar], cp_model.IntVar]:
+    ) -> tuple[cp_model.IntVar, int | cp_model.IntVar, cp_model.IntVar]:
         """
         Adds variables for the start, end, and duration of an activity, and enforces
         constraints on them.
@@ -681,7 +678,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     def fnode_to_value_or_variable(
         self, fnode: FNode
-    ) -> Union[cp_model.IntVar, cp_model.LinearExprT, bool, int]:
+    ) -> cp_model.IntVar | cp_model.LinearExprT | bool | int:
         """
         Converts an FNode to its corresponding value or variable representation
         in the model.
@@ -701,8 +698,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 of applying an operator.
         """
 
-        stack: List[Tuple[FNode, bool]] = [(fnode, False)]
-        results: List[Union[cp_model.IntVar, cp_model.LinearExprT, bool, int]] = []
+        stack: list[tuple[FNode, bool]] = [(fnode, False)]
+        results: list[cp_model.IntVar | cp_model.LinearExprT | bool | int] = []
 
         while len(stack) > 0:
             fnode, processed = stack.pop()
@@ -736,8 +733,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             elif fnode.node_type in _ARITHMETIC_OPERATOR_MAP:
                 if not processed:
                     stack.append((fnode, True))
-                    for arg in fnode.args:
-                        stack.append((arg, False))
+                    stack.extend((arg, False) for arg in fnode.args)
                 else:
                     op = _ARITHMETIC_OPERATOR_MAP[fnode.node_type]
                     args = [results.pop() for arg in fnode.args]
@@ -751,7 +747,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
     def add_constraint(
         self, fnode: FNode, cache_enabled: bool = True
-    ) -> Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
+    ) -> cp_model.IntVar | cp_model.NotBooleanVariable:
         """
         Adds the constraint represented by the given FNode to the model.
 
@@ -775,7 +771,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         if self._fnode_contains_fluents(fnode):
             cache_enabled = False
 
-        stack: List[Tuple[FNode, bool]] = [(fnode, False)]
+        stack: list[tuple[FNode, bool]] = [(fnode, False)]
         results = []
 
         while len(stack) > 0:
@@ -783,7 +779,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             # check if fnode cached
             if cache_enabled and not processed and repr(fnode) in self._variables_cache:
-                results.append(self._variables_cache[repr(fnode)])  # type: ignore[arg-type]
+                results.append(self._variables_cache[repr(fnode)])
 
             elif fnode.node_type in [
                 OperatorKind.PARAM_EXP,
@@ -815,11 +811,10 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             ]:
                 if not processed:
                     stack.append((fnode, True))
-                    for arg in fnode.args:
-                        stack.append((arg, False))
+                    stack.extend((arg, False) for arg in fnode.args)
                     continue
 
-                args: List[cp_model.IntVar] = [
+                args: list[cp_model.IntVar] = [
                     results.pop()  # type: ignore[misc]
                     for arg in fnode.args
                 ]
@@ -849,7 +844,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                         bool_var.negated()
                     )
 
-                results.append(bool_var)  # type: ignore[arg-type]
+                results.append(bool_var)
                 if cache_enabled:
                     self._variables_cache[repr(fnode)] = bool_var
 
@@ -857,11 +852,10 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 if not processed:
                     assert len(fnode.args) == 2
                     stack.append((fnode, True))
-                    for arg in fnode.args:
-                        stack.append((arg, False))
+                    stack.extend((arg, False) for arg in fnode.args)
                     continue
 
-                args: List[cp_model.IntVar] = [results.pop() for arg in fnode.args]
+                args: list[cp_model.IntVar] = [results.pop() for arg in fnode.args]
                 op = _BOOL_OPERATOR_MAP[fnode.node_type]
                 bool_var = self.new_bool_var()
                 self.model.add(op(args[0], args[1])).only_enforce_if(bool_var)
@@ -878,7 +872,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                         bool_var.negated()
                     )
 
-                results.append(bool_var)  # type: ignore[arg-type]
+                results.append(bool_var)
                 if cache_enabled:
                     self._variables_cache[repr(fnode)] = bool_var
 
@@ -951,9 +945,9 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
     def _solve(
         self,
         problem: "up.model.AbstractProblem",
-        heuristic: Optional[Callable[["up.model.state.State"], Optional[float]]] = None,
-        timeout: Optional[float] = None,
-        output_stream: Optional[IO[str]] = None,
+        heuristic: Callable[["up.model.state.State"], float | None] | None = None,
+        timeout: float | None = None,
+        output_stream: IO[str] | None = None,
     ) -> "up.engines.results.PlanGenerationResult":
 
         self.solve_init()
@@ -962,7 +956,11 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             self.check_if_supported_problem(problem)
 
             if heuristic is not None:
-                warnings.warn("CPSE does not support custom heuristics", UserWarning)
+                # stacklevel=2 targets _solve's caller; it can't reliably reach user
+                # code through UP's solve() wrapper, so don't bump it.
+                warnings.warn(
+                    "CPSE does not support custom heuristics", UserWarning, stacklevel=2
+                )
 
             self.model.name = problem.name
 
@@ -1034,8 +1032,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
                 # map a decision variable to its solution value
-                assignment: Dict[
-                    Union[Parameter, Presence, timing.Timepoint], Union[bool, int]
+                assignment: dict[
+                    Parameter | Presence | timing.Timepoint, bool | int
                 ] = {}
                 for up_var, cp_var in self._model_vars.items():
                     # map a boolean parameter to its boolean value rather than the

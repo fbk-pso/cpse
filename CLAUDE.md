@@ -81,12 +81,11 @@ invoked through `OneshotPlanner(name="cpse")`. Configurable params: `lower_bound
 ### Tests
 
 `tests/CommonTests.py` defines a `CommonTests` base class holding the entire
-shared test suite plus a module-level `problem` pytest fixture.
-`tests/test_CPSE.py` and `tests/test_CPSETimepoints.py` subclass `CommonTests`
-(overriding `engine_name` / `engine_class`) so the same tests run against each
-engine. Each test module re-imports the `problem` fixture
-(`from .CommonTests import CommonTests, problem  # noqa: F401`) — that import is
-**required** for pytest fixture discovery; do not let `ruff --fix` remove it.
+shared test suite. `tests/test_CPSE.py` and `tests/test_CPSETimepoints.py`
+subclass `CommonTests` (overriding `engine_name` / `engine_class`) so the same
+tests run against each engine. The shared `problem` pytest fixture lives in
+`tests/conftest.py`, so pytest auto-discovers it for every test module — no
+import needed in the test files.
 
 ## Conventions and gotchas
 
@@ -95,8 +94,7 @@ engine. Each test module re-imports the `problem` fixture
   (`[dependency-groups] dev` in `pyproject.toml`), and is pinned
   `>=1.3.0.445.dev1` — the `cpse` engine needs optional-activities support
   (`Presence`) that is not in a stable PyPI UP release.
-- **ortools is pinned** to `9.12.4544`; supported Python is **3.10–3.13** (no
-  3.14 wheels for this ortools).
+- **ortools is pinned** to `>=9.15,<9.16`; supported Python is **3.10–3.14**.
 - Formatting/linting is **ruff** (line length 88); type checking is **mypy**,
   configured in `pyproject.toml`. Four tests are `@pytest.mark.skip`-ed because
   CP-SAT is too slow on them with the pinned ortools.

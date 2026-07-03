@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 [dependency-groups]
@@ -46,18 +47,17 @@ target-version = "py310"
 src = ["src", "tests", "ci"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
-
-[tool.ruff.lint.per-file-ignores]
-# The test suite relies on `from unified_planning.shortcuts import *` (that module
-# is intended to be star-imported), and pytest fixtures used as test-method
-# arguments trip F811 against the fixture import (a false positive).
-"tests/*" = ["F403", "F405", "F811"]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "RUF", "PERF", "PIE"]
 
 [tool.mypy]
 check_untyped_defs = true
 disable_error_code = ["no-redef"]
 files = ["src/cpse"]
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_return_any = true
+warn_unused_configs = true
+no_implicit_optional = true
 
 [[tool.mypy.overrides]]
 module = ["unified_planning.*"]
