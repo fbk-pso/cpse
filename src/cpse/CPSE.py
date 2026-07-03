@@ -15,7 +15,6 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
-from typing import Dict, List, Tuple, Union
 
 import unified_planning as up
 from ortools.sat.python import cp_model
@@ -123,13 +122,13 @@ class CPSE(CPSEBaseEngine):
 
         # map each fluent to its effects, adjusting values based on increase/decrease
         # effect types
-        fluent_effects: Dict[
+        fluent_effects: dict[
             FNode,
-            List[
-                Tuple[
-                    "timing.Timing",
+            list[
+                tuple[
+                    timing.Timing,
                     int,
-                    Union[cp_model.IntVar, cp_model.NotBooleanVariable, bool],
+                    cp_model.IntVar | cp_model.NotBooleanVariable | bool,
                 ]
             ],
         ] = {}
@@ -159,7 +158,7 @@ class CPSE(CPSEBaseEngine):
                 # assignment effects not supported
                 raise NotImplementedError(f"Effect kind {eff.kind} not supported.")
 
-            bool_var: Union[cp_model.IntVar, cp_model.NotBooleanVariable, bool]
+            bool_var: cp_model.IntVar | cp_model.NotBooleanVariable | bool
             if eff.is_conditional():
                 if activity is not None and activity.optional:
                     bool_var = self.add_constraint(
@@ -196,11 +195,9 @@ class CPSE(CPSEBaseEngine):
                     "values for fluents."
                 )
 
-            times: List[cp_model.LinearExprT] = [0]
+            times: list[cp_model.LinearExprT] = [0]
             values = [init_value]
-            actives: List[Union[cp_model.IntVar, cp_model.NotBooleanVariable, bool]] = [
-                True
-            ]
+            actives: list[cp_model.IntVar | cp_model.NotBooleanVariable | bool] = [True]
             for effect_timing, value, active in fluent_effects[fluent_exp]:
                 times.append(self._convert_timing_to_linear_expr(effect_timing))
                 values.append(value)
@@ -219,7 +216,7 @@ class CPSE(CPSEBaseEngine):
         self,
         time_interval: timing.TimeInterval,
         fnode: FNode,
-        activity: Union[Activity, None],
+        activity: Activity | None,
         name: str,
     ):
         """

@@ -16,7 +16,6 @@
 #
 
 from abc import abstractmethod
-from typing import List
 
 import pytest
 from unified_planning.engines import PlanGenerationResult, PlanGenerationResultStatus
@@ -30,7 +29,7 @@ def problem() -> SchedulingProblem:
     return SchedulingProblem("test")
 
 
-def are_activities_overlapped(plan: Schedule, activities: List[Activity]) -> bool:
+def are_activities_overlapped(plan: Schedule, activities: list[Activity]) -> bool:
     def start_time(activity):
         return plan.get(activity.start).constant_value()
 

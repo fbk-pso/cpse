@@ -46,7 +46,7 @@ target-version = "py310"
 src = ["src", "tests", "ci"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+select = ["E", "F", "W", "I", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 # The test suite relies on `from unified_planning.shortcuts import *` (that module

@@ -15,9 +15,9 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
-import collections
 import itertools
-from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
+from collections import defaultdict
+from collections.abc import Iterable
 
 import unified_planning as up
 from ortools.sat.python import cp_model
@@ -61,13 +61,13 @@ class CPSETimepoints(CPSEBaseEngine):
     def solve_init(self):
         super().solve_init()
 
-        self.timepoints: List[cp_model.IntVar] = []
-        self.assignment_matrix: Dict[
-            Tuple[timing.Timepoint, int], List[cp_model.IntVar]
+        self.timepoints: list[cp_model.IntVar] = []
+        self.assignment_matrix: dict[
+            tuple[timing.Timepoint, int], list[cp_model.IntVar]
         ] = {}
-        self.resources: Dict[FNode, List[List[cp_model.IntVar]]] = {}
-        self.parametric_fluent_assignments: Dict[
-            FNode, Dict[FNode, Tuple[Tuple[Object, ...], cp_model.IntVar]]
+        self.resources: dict[FNode, list[list[cp_model.IntVar]]] = {}
+        self.parametric_fluent_assignments: dict[
+            FNode, dict[FNode, tuple[tuple[Object, ...], cp_model.IntVar]]
         ] = {}
 
     @property
@@ -106,12 +106,8 @@ class CPSETimepoints(CPSEBaseEngine):
         if not problem.discrete_time:
             raise NotImplementedError("Continuous time not supported.")
 
-        fluents: Dict["timing.Timing", Dict[Fluent, FNode]] = collections.defaultdict(
-            dict
-        )
-        contains_parameters: Dict["timing.Timing", Dict[Fluent, bool]] = (
-            collections.defaultdict(dict)
-        )
+        fluents: dict[timing.Timing, dict[Fluent, FNode]] = defaultdict(dict)
+        contains_parameters: dict[timing.Timing, dict[Fluent, bool]] = defaultdict(dict)
         for effect_timing, eff, activity in problem.all_effects():
             fluent = eff.fluent.fluent()
             contains_params = self._fluent_exp_contains_parameters(eff.fluent)
@@ -141,7 +137,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
     def _add_activity_timepoints(
         self, activity: Activity
-    ) -> Tuple[cp_model.IntVar, Union[int, cp_model.IntVar], cp_model.IntVar]:
+    ) -> tuple[cp_model.IntVar, int | cp_model.IntVar, cp_model.IntVar]:
         """
         Adds variables for the start, end, and duration of an activity, and enforces
         constraints on them.
@@ -268,7 +264,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
     def _collect_all_problem_timings(
         self, problem: SchedulingProblem
-    ) -> List[Tuple["timing.Timepoint", int]]:
+    ) -> list[tuple["timing.Timepoint", int]]:
         """
         Collects all unique timepoints and their associated delays from the given
         scheduling problem.
@@ -284,7 +280,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 of the form `(timepoint, delay)`.
         """
 
-        problem_timings: Set[Tuple["timing.Timepoint", int]] = set()
+        problem_timings: set[tuple[timing.Timepoint, int]] = set()
 
         for activity in problem.activities:
             problem_timings.add((activity.start, 0))
@@ -366,8 +362,8 @@ class CPSETimepoints(CPSEBaseEngine):
                 yield fluent(*args)
 
     def get_all_fluent_assignments(
-        self, fluent_exps: List[FNode], params: List[Parameter]
-    ) -> Iterable[Tuple[List[FNode], List[cp_model.IntVar]]]:
+        self, fluent_exps: list[FNode], params: list[Parameter]
+    ) -> Iterable[tuple[list[FNode], list[cp_model.IntVar]]]:
         """
         Generates all possible grounded assignments of parameters to fluent expressions.
 
@@ -413,7 +409,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
     def all_parameters_used_in_fluents(
         self, problem: SchedulingProblem
-    ) -> Set[Parameter]:
+    ) -> set[Parameter]:
         """
         Identifies all parameters used in the fluent expressions of the given problem.
 
@@ -479,8 +475,8 @@ class CPSETimepoints(CPSEBaseEngine):
 
     def _set_parametric_fluent_vars_at_timepoint(
         self,
-        parametric_fluent_exps: List[FNode],
-        ground_fluent_exps: List[FNode],
+        parametric_fluent_exps: list[FNode],
+        ground_fluent_exps: list[FNode],
         tp_idx: int,
     ):
         """
@@ -706,7 +702,7 @@ class CPSETimepoints(CPSEBaseEngine):
         all_fluent_exps = self.get_all_fluent_expressions(problem)
         all_parameters = list(self.all_parameters_used_in_fluents(problem))
 
-        params_objs_assignment: Dict[Parameter, Dict[Object, cp_model.IntVar]] = {}
+        params_objs_assignment: dict[Parameter, dict[Object, cp_model.IntVar]] = {}
         for param in all_parameters:
             params_objs_assignment[param] = {}
             for obj in self._type_objects_mapping[param.type]:
@@ -784,10 +780,8 @@ class CPSETimepoints(CPSEBaseEngine):
 
     def add_no_effect_constraints(
         self,
-        fluent_effects: Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]],
-        condition_vars: Dict[
-            Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]
-        ],
+        fluent_effects: dict[FNode, dict["timing.Timing", dict[str, list[Effect]]]],
+        condition_vars: dict[Effect, cp_model.IntVar | cp_model.NotBooleanVariable],
     ):
         """
         Adds constraints to ensure that fluent values remain unchanged if no effects are
@@ -815,8 +809,8 @@ class CPSETimepoints(CPSEBaseEngine):
                 #   or ... ) => no_effects_at_tp_var
                 # ([timing@tpi and ((fluent_assignment and condition_var) or ... )]
                 #   or ... ) or no_effects_at_tp_var
-                first_level_disjunctive_vars: List[
-                    Union[cp_model.IntVar, cp_model.NotBooleanVariable]
+                first_level_disjunctive_vars: list[
+                    cp_model.IntVar | cp_model.NotBooleanVariable
                 ] = []
                 for effect_timing in fluent_effects[fluent_exp]:
                     timing_at_tpi = self.assignment_matrix[
@@ -870,10 +864,8 @@ class CPSETimepoints(CPSEBaseEngine):
 
     def add_assign_effect_constraints(
         self,
-        fluent_effects: Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]],
-        condition_vars: Dict[
-            Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]
-        ],
+        fluent_effects: dict[FNode, dict["timing.Timing", dict[str, list[Effect]]]],
+        condition_vars: dict[Effect, cp_model.IntVar | cp_model.NotBooleanVariable],
     ):
         """
         Adds constraints to ensure that assignment effects do not occur simultaneously
@@ -915,12 +907,12 @@ class CPSETimepoints(CPSEBaseEngine):
                             if fluent_assignment_var2 is None:
                                 fluent_assignment_var2 = True
 
-                            condition_var1: Union[
-                                cp_model.IntVar, cp_model.NotBooleanVariable, bool
-                            ]
-                            condition_var2: Union[
-                                cp_model.IntVar, cp_model.NotBooleanVariable, bool
-                            ]
+                            condition_var1: (
+                                cp_model.IntVar | cp_model.NotBooleanVariable | bool
+                            )
+                            condition_var2: (
+                                cp_model.IntVar | cp_model.NotBooleanVariable | bool
+                            )
                             if e1.is_conditional():
                                 condition_var1 = condition_vars[e1]
                             else:
@@ -960,11 +952,9 @@ class CPSETimepoints(CPSEBaseEngine):
         fluent_exp: FNode,
         effect: Effect,
         fluent_idx: int,
-        condition_vars: Dict[
-            Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]
-        ],
-        fluent_assignment_var: Union[cp_model.IntVar, None],
-        value: Union[FNode, None] = None,
+        condition_vars: dict[Effect, cp_model.IntVar | cp_model.NotBooleanVariable],
+        fluent_assignment_var: cp_model.IntVar | None,
+        value: FNode | None = None,
     ):
         """
         Adds an effect to the model.
@@ -1023,7 +1013,7 @@ class CPSETimepoints(CPSEBaseEngine):
                 self.extract_all_params_from_fluent_exps(all_fluent_exps)
             )
             all_fluent_assignments: Iterable[
-                Tuple[Optional[List[FNode]], Optional[List[cp_model.IntVar]]]
+                tuple[list[FNode] | None, list[cp_model.IntVar] | None]
             ] = [(None, None)]
             if len(all_parameters) > 0:
                 all_fluent_assignments = self.get_all_fluent_assignments(
@@ -1052,7 +1042,7 @@ class CPSETimepoints(CPSEBaseEngine):
                     else:
                         resource_equality = resource_var == (prev_var + value_var)  # type: ignore
 
-                    constraints: List[cp_model.Constraint] = []
+                    constraints: list[cp_model.Constraint] = []
                     if fluent_assignment_var is None:
                         if effect.is_conditional():
                             c1 = self.model.add(resource_equality).only_enforce_if(
@@ -1130,7 +1120,7 @@ class CPSETimepoints(CPSEBaseEngine):
         self.add_parametric_fluents_constraints(problem)
 
         # map each fluent to its effects
-        fluent_effects: Dict[FNode, Dict["timing.Timing", Dict[str, List[Effect]]]] = {}
+        fluent_effects: dict[FNode, dict[timing.Timing, dict[str, list[Effect]]]] = {}
         for fluent_exp in self.resources:
             fluent_effects[fluent_exp] = {}
 
@@ -1151,7 +1141,7 @@ class CPSETimepoints(CPSEBaseEngine):
                     )
 
         # map each fluent to its maximum number of (conditional) effects
-        max_num_effects: Dict[FNode, int] = {}
+        max_num_effects: dict[FNode, int] = {}
         for fluent_exp in fluent_effects:
             max_num_effects[fluent_exp] = 0
             for effect_timing in fluent_effects[fluent_exp]:
@@ -1182,9 +1172,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
         # add the effects as constraints to the model
         # sum the effect values of non-conditional effects
-        condition_vars: Dict[
-            Effect, Union[cp_model.IntVar, cp_model.NotBooleanVariable]
-        ] = {}
+        condition_vars: dict[Effect, cp_model.IntVar | cp_model.NotBooleanVariable] = {}
         for fluent_exp in fluent_effects:
             for effect_timing in fluent_effects[fluent_exp]:
                 sum_inc_dec_effects = 0
@@ -1298,7 +1286,7 @@ class CPSETimepoints(CPSEBaseEngine):
         all_fluent_exps = list(self.extract_all_parametric_fluent_exp_from_fnode(fnode))
         all_parameters = list(self.extract_all_params_from_fluent_exps(all_fluent_exps))
         all_fluent_assignments: Iterable[
-            Tuple[Optional[List[FNode]], List[cp_model.IntVar]]
+            tuple[list[FNode] | None, list[cp_model.IntVar]]
         ] = [(None, [])]
         if len(all_parameters) > 0:
             all_fluent_assignments = self.get_all_fluent_assignments(
