@@ -194,8 +194,8 @@ class TestCPSE(CommonTests):
 
     def test_not_supported_fluent_with_parameters(self, problem: SchedulingProblem):
         user_type = UserType("user_type")
-        o1 = problem.add_object("o1", user_type)
-        o2 = problem.add_object("o2", user_type)
+        problem.add_object("o1", user_type)
+        problem.add_object("o2", user_type)
         parameter = problem.add_variable("parameter", user_type)
         fluent = problem.add_fluent(
             "fluent", IntType(), obj=user_type, default_initial_value=0

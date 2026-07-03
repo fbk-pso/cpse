@@ -19,12 +19,7 @@ from typing import Dict, List, Tuple, Union
 
 import unified_planning as up
 from ortools.sat.python import cp_model
-from unified_planning.model import (
-    Effect,
-    FNode,
-    ProblemKind,
-    timing,
-)
+from unified_planning.model import Effect, FNode, ProblemKind, timing
 from unified_planning.model.scheduling import Activity, SchedulingProblem
 
 from .CPSEBaseEngine import CPSEBaseEngine
@@ -124,7 +119,8 @@ class CPSE(CPSEBaseEngine):
                 effects to be applied to the model.
         """
 
-        # map each fluent to its effects, adjusting values based on increase/decrease effect types
+        # map each fluent to its effects, adjusting values based on increase/decrease
+        # effect types
         fluent_effects: Dict[
             FNode,
             List[
@@ -135,7 +131,7 @@ class CPSE(CPSEBaseEngine):
                 ]
             ],
         ] = {}
-        for timing, eff, activity in problem.all_effects():
+        for effect_timing, eff, activity in problem.all_effects():
             eff: Effect
             fluent_exp = eff.fluent
 
@@ -175,25 +171,27 @@ class CPSE(CPSEBaseEngine):
                 else:
                     bool_var = True
 
-            fluent_effects[fluent_exp].append((timing, value, bool_var))
+            fluent_effects[fluent_exp].append((effect_timing, value, bool_var))
 
         for fluent_exp in fluent_effects:
             lb, ub = self._fluent_bounds[fluent_exp.fluent().name]
             if fluent_exp not in self._fluent_initial_value:
                 raise NotImplementedError(
-                    f"Fluent '{fluent_exp}' must be initialized with a constant value of type integer or boolean."
+                    f"Fluent '{fluent_exp}' must be initialized with a constant value "
+                    "of type integer or boolean."
                 )
             init_value = self._fluent_initial_value[fluent_exp]
             if init_value.is_int_constant():
                 init_value = init_value.int_constant_value()
             elif init_value.is_bool_constant():
-                if init_value.bool_constant_value() == False:
+                if not init_value.bool_constant_value():
                     init_value = 0
                 else:
                     init_value = 1
             else:
                 raise NotImplementedError(
-                    "Only integer and boolean constants are supported as initial values for fluents."
+                    "Only integer and boolean constants are supported as initial "
+                    "values for fluents."
                 )
 
             times: List[cp_model.LinearExprT] = [0]
@@ -201,8 +199,8 @@ class CPSE(CPSEBaseEngine):
             actives: List[Union[cp_model.IntVar, cp_model.NotBooleanVariable, bool]] = [
                 True
             ]
-            for timing, value, active in fluent_effects[fluent_exp]:
-                times.append(self._convert_timing_to_linear_expr(timing))
+            for effect_timing, value, active in fluent_effects[fluent_exp]:
+                times.append(self._convert_timing_to_linear_expr(effect_timing))
                 values.append(value)
                 actives.append(active)
 
@@ -223,15 +221,19 @@ class CPSE(CPSEBaseEngine):
         name: str,
     ):
         """
-        Adds a condition to the model, enforcing that it is satisfied within a specified time interval.
+        Adds a condition to the model, enforcing that it is satisfied within a
+        specified time interval.
 
-        This method creates a constraint based on the given condition and uses the `add_cumulative`
+        This method creates a constraint based on the given condition and uses the
+        `add_cumulative`
         method to ensure it holds throughout the specified time interval.
 
         Args:
-            time_interval (timing.TimeInterval): The time interval during which the condition
+            time_interval (timing.TimeInterval): The time interval during which the
+                condition
                 must be satisfied.
-            fnode (FNode): The FNode representing the condition to be added as a constraint.
+            fnode (FNode): The FNode representing the condition to be added as a
+                constraint.
             name (str): The name of the condition for identification within the model.
         """
 
@@ -244,7 +246,8 @@ class CPSE(CPSEBaseEngine):
             start_delay += 1
         start = self._model_vars[time_interval.lower.timepoint] + start_delay
 
-        # add 1 to end because `add_cumulative` enforces the constraint for t in [start, end),
+        # add 1 to end because `add_cumulative` enforces the constraint for t in [start,
+        # end),
         # but we want the constraint to be enforced also at the end
         end_delay = 1
         if time_interval.upper.delay != 0:

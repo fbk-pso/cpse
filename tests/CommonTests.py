@@ -496,7 +496,7 @@ class CommonTests:
     def test_bool_fluent_with_constant_value(self, problem: SchedulingProblem):
         fluent = problem.add_fluent("fluent", default_initial_value=True)
         problem.set_initial_value(fluent, False)
-        activity = problem.add_activity("activity", duration=5)
+        problem.add_activity("activity", duration=5)
         self.problem_solved_satisficing_or_optimally(problem)
 
     def test_fluent_with_args(self, problem: SchedulingProblem):
@@ -518,7 +518,7 @@ class CommonTests:
         self.problem_solved_satisficing_or_optimally(problem)
 
     def test_constraint_with_constant_bool(self, problem: SchedulingProblem):
-        activity = problem.add_activity("activity", 1)
+        problem.add_activity("activity", 1)
         bool_var = problem.add_variable("bool_var", BoolType())
 
         problem.add_constraint(True)

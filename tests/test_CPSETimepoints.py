@@ -69,7 +69,7 @@ class TestCPSETimepoints(CommonTests):
         fluent = problem.add_fluent(
             "fluent", IntType(), obj=user_type, default_initial_value=10
         )
-        o1 = problem.add_object("o1", user_type)
+        problem.add_object("o1", user_type)
         activity = problem.add_activity("activity", duration=Plus(fluent(param), 10))
 
         problem.add_constraint(Equals(activity.start, 0))
@@ -90,7 +90,7 @@ class TestCPSETimepoints(CommonTests):
         fluent = problem.add_fluent(
             "fluent", IntType(), obj=user_type, default_initial_value=10
         )
-        o1 = problem.add_object("o1", user_type)
+        problem.add_object("o1", user_type)
 
         activity.set_duration_bounds(lower=fluent(param), upper=Plus(fluent(param), 10))
 
@@ -101,7 +101,7 @@ class TestCPSETimepoints(CommonTests):
         assert 10 <= res.plan.get(activity.end).constant_value() <= 20
 
     def test_constraint_on_resource(self, problem: SchedulingProblem):
-        activity = problem.add_activity("activity", duration=1)
+        problem.add_activity("activity", duration=1)
         resource = problem.add_resource("resource", capacity=2)
 
         problem.add_constraint(LE(resource, 2))
@@ -337,14 +337,16 @@ class TestCPSETimepoints(CommonTests):
             "int_var", get_environment().type_manager.IntType()
         )
 
-        # this condition should not be applied since the interval is [activity.end, activity.start]
+        # this condition should not be applied since the interval is [activity.end,
+        # activity.start]
         problem.add_condition(
             ClosedTimeInterval(Timing(0, activity.end), Timing(0, activity.start)),
             Equals(int_var, 5),
         )
         problem.add_constraint(Equals(int_var, 4))
 
-        # this condition should not be applied since the interval is [activity.end, activity.start]
+        # this condition should not be applied since the interval is [activity.end,
+        # activity.start]
         activity.add_condition(
             ClosedTimeInterval(Timing(0, activity.end), Timing(0, activity.start)),
             Equals(resource, 1),
@@ -426,9 +428,9 @@ class TestCPSETimepoints(CommonTests):
         )
         o1 = problem.add_object("o1", user_type1)
         o2 = problem.add_object("o2", user_type1)
-        o3 = problem.add_object("o3", user_type2)
-        o4 = problem.add_object("o4", user_type2)
-        o5 = problem.add_object("o5", user_type_parent)
+        problem.add_object("o3", user_type2)
+        problem.add_object("o4", user_type2)
+        problem.add_object("o5", user_type_parent)
         o6 = problem.add_object("o6", user_type3)
 
         activity.add_increase_effect(activity.end, fluent1(param1, param2), 2)
@@ -456,10 +458,10 @@ class TestCPSETimepoints(CommonTests):
             obj2=user_type2,
             default_initial_value=2,
         )
-        o1 = problem.add_object("o1", user_type1)
+        problem.add_object("o1", user_type1)
         o2 = problem.add_object("o2", user_type1)
         o3 = problem.add_object("o3", user_type2)
-        o4 = problem.add_object("o4", user_type2)
+        problem.add_object("o4", user_type2)
 
         final_value_is_6 = problem.add_variable("final_value_is_6", BoolType())
 
@@ -492,7 +494,7 @@ class TestCPSETimepoints(CommonTests):
         assert res.plan.get(param1).constant_value() == o2
         assert res.plan.get(param2).constant_value() == o3
         assert res.plan.get(param3).constant_value() == o3
-        assert res.plan.get(final_value_is_6).constant_value() == True
+        assert res.plan.get(final_value_is_6).constant_value() is True
 
     def test_constraint_and_condition_with_multiple_parametric_fluents(
         self, problem: SchedulingProblem
@@ -517,9 +519,9 @@ class TestCPSETimepoints(CommonTests):
             default_initial_value=0,
         )
         o1 = problem.add_object("o1", user_type1)
-        o2 = problem.add_object("o2", user_type1)
+        problem.add_object("o2", user_type1)
         o3 = problem.add_object("o3", user_type2)
-        o4 = problem.add_object("o4", user_type2)
+        problem.add_object("o4", user_type2)
 
         problem.add_constraint(Equals(param1, o1))
         problem.add_constraint(Equals(param2, o3))
@@ -602,7 +604,7 @@ class TestCPSETimepoints(CommonTests):
             "fluent2", IntType(), obj=user_type, default_initial_value=2
         )
         o1 = problem.add_object("o1", user_type)
-        o2 = problem.add_object("o2", user_type)
+        problem.add_object("o2", user_type)
 
         activity1.add_increase_effect(
             activity2.start, fluent1(param), Times(fluent2(param), 2)
@@ -753,8 +755,8 @@ class TestCPSETimepoints(CommonTests):
         fluent = problem.add_fluent(
             "fluent", IntType(), obj1=user_type1, obj2=user_type2
         )
-        o1 = problem.add_object("o1", user_type1)
-        o2 = problem.add_object("o2", user_type2)
+        problem.add_object("o1", user_type1)
+        problem.add_object("o2", user_type2)
 
         activity.add_increase_effect(activity.start, fluent(param1, param2), 2)
         activity.add_increase_effect(activity.start, fluent(param1, param3), 2)

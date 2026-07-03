@@ -52,8 +52,11 @@ credits = Credits(
     "pso-tools@fbk.eu",
     "https://github.com/fbk-pso/cpse",
     "GPLv3",
-    "CPSE is a scheduling engine that encodes scheduling problems as constraint satisfaction models.",
-    "CPSE (Constraint Programming Scheduling Engine) is a scheduling engine that encodes scheduling problems as constraint satisfaction models and solves them using the CP-SAT solver from Google OR-Tools.",
+    "CPSE is a scheduling engine that encodes scheduling problems as constraint "
+    "satisfaction models.",
+    "CPSE (Constraint Programming Scheduling Engine) is a scheduling engine that "
+    "encodes scheduling problems as constraint satisfaction models and solves them "
+    "using the CP-SAT solver from Google OR-Tools.",
 )
 
 _ARITHMETIC_OPERATOR_MAP = {
@@ -82,10 +85,13 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
     `up.engines.mixins.OneshotPlannerMixin`.
 
     Attributes:
-        lower_bound (int): The minimum bound for variables in the model, defaulting to 0.
-        upper_bound (int): The maximum bound for variables in the model, defaulting to INT32_MAX.
+        lower_bound (int): The minimum bound for variables in the model, defaulting to
+            0.
+        upper_bound (int): The maximum bound for variables in the model, defaulting to
+            INT32_MAX.
         model (cp_model.CpModel): The underlying constraint programming model.
-        objects (Dict[Object, int]): A dictionary mapping objects to a unique integer identifier.
+        objects (Dict[Object, int]): A dictionary mapping objects to a unique integer
+            identifier.
     """
 
     def __init__(self, **kwargs):
@@ -103,7 +109,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         # dictionary of activities keyed by name
         self._activities: Dict[str, activity_type] = {}
-        # mapping timepoints, parameters and fluents to the corresponding integer variables in the model
+        # mapping timepoints, parameters and fluents to the corresponding integer
+        # variables in the model
         self._model_vars: Dict[
             Union[timing.Timepoint, Parameter, Fluent, Presence],
             Union[cp_model.IntVar, int],
@@ -208,11 +215,13 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self, bool_vars: List[Union[cp_model.IntVar, cp_model.NotBooleanVariable]]
     ) -> Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
         """
-        Creates a boolean variable representing the logical AND of the given boolean variables.
+        Creates a boolean variable representing the logical AND of the given boolean
+        variables.
 
         Args:
             bool_vars (List[Union[cp_model.IntVar, cp_model.NotBooleanVariable]]):
-                A list of boolean variables to be combined using a logical AND operation.
+                A list of boolean variables to be combined using a logical AND
+                operation.
 
         Returns:
             Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
@@ -233,7 +242,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         self, bool_vars: List[Union[cp_model.IntVar, cp_model.NotBooleanVariable]]
     ) -> Union[cp_model.IntVar, cp_model.NotBooleanVariable]:
         """
-        Creates a boolean variable representing the logical OR of the given boolean variables.
+        Creates a boolean variable representing the logical OR of the given boolean
+        variables.
 
         Args:
             bool_vars (List[Union[cp_model.IntVar, cp_model.NotBooleanVariable]]):
@@ -303,7 +313,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             fnode (FNode): The FNode to be traversed.
 
         Returns:
-            Set[FNode]: A set of fluent expressions (`FNode`) found within the given `fnode`.
+            Set[FNode]: A set of fluent expressions (`FNode`) found within the given
+                `fnode`.
         """
 
         all_fluent_exps = set()
@@ -329,7 +340,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             fnode (FNode): The FNode to be traversed.
 
         Returns:
-            Set[FNode]: A set of fluent expressions (`FNode`) found within the given `fnode`.
+            Set[FNode]: A set of fluent expressions (`FNode`) found within the given
+                `fnode`.
         """
 
         return set(
@@ -349,10 +361,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         all unique parameters used within them.
 
         Args:
-            fluent_exps (Iterable[FNode]): An iterable of fluent expressions from which parameters will be extracted.
+            fluent_exps (Iterable[FNode]): An iterable of fluent expressions from
+                which parameters will be extracted.
 
         Returns:
-            Set[Parameter]: A set of unique parameters found within the given fluent expressions.
+            Set[Parameter]: A set of unique parameters found within the given fluent
+                expressions.
         """
 
         all_parameters = set()
@@ -423,7 +437,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 a type that is either integer or boolean.
 
         Returns:
-            Tuple[int, int]: A tuple containing the lower and upper bounds for the fluent.
+            Tuple[int, int]: A tuple containing the lower and upper bounds for the
+                fluent.
 
         Raises:
             NotImplementedError: If the fluent's type is not integer or boolean.
@@ -544,7 +559,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             type (Type): The type against which compatibility of objects is checked.
 
         Returns:
-            List[Object]: A list of `Object` instances that are compatible with the given `type`.
+            List[Object]: A list of `Object` instances that are compatible with the
+                given `type`.
         """
 
         objects = []
@@ -561,7 +577,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             type (Type): The type against which compatibility of parameters is checked.
 
         Returns:
-            List[Parameter]: A list of `Parameter` instances that are compatible with the given `type`.
+            List[Parameter]: A list of `Parameter` instances that are compatible
+                with the given `type`.
         """
 
         parameters = []
@@ -581,9 +598,12 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             activity (Activity): The activity for which variables are being defined.
 
         Returns:
-            Tuple[Union[int, cp_model.IntVar], Union[int, cp_model.IntVar], Union[int, cp_model.IntVar]]:
-                A tuple containing the start time, end time, and duration for the activity,
-                each represented as either an integer (for fixed values) or a model variable.
+            Tuple[Union[int, cp_model.IntVar], Union[int, cp_model.IntVar],
+                Union[int, cp_model.IntVar]]:
+                A tuple containing the start time, end time, and duration for the
+                activity,
+                each represented as either an integer (for fixed values) or a model
+                variable.
         """
 
         assert (
@@ -1091,7 +1111,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 log_messages=e,
             )
 
-        except:
+        except Exception:
             return PlanGenerationResult(
                 PlanGenerationResultStatus.INTERNAL_ERROR,
                 plan=None,

@@ -47,21 +47,12 @@ src = ["src", "tests", "ci"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
-ignore = [
-    "E501",  # line length handled by formatter
-    "E402",  # module-import-not-at-top — used intentionally in places
-    "E712",  # `v == True` distinguishes a literal bool from other values
-    "E722",  # bare-except — tolerated in a solver-cleanup path
-    "E731",  # lambda-assignment — tolerated
-    "E741",  # ambiguous variable name (l, O, I) — tolerated in math-heavy code
-    "F402",  # `timing` import intentionally shadowed by loop variables
-]
 
 [tool.ruff.lint.per-file-ignores]
-"__init__.py" = ["F401", "F403"]
-"tests/**" = ["F811", "F403", "F405", "F841"]  # test fixtures create unused locals for their side effects
-
-[tool.ruff.format]
+# The test suite relies on `from unified_planning.shortcuts import *` (that module
+# is intended to be star-imported), and pytest fixtures used as test-method
+# arguments trip F811 against the fixture import (a false positive).
+"tests/*" = ["F403", "F405", "F811"]
 
 [tool.mypy]
 check_untyped_defs = true
