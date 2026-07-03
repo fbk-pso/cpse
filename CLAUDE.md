@@ -81,12 +81,11 @@ invoked through `OneshotPlanner(name="cpse")`. Configurable params: `lower_bound
 ### Tests
 
 `tests/CommonTests.py` defines a `CommonTests` base class holding the entire
-shared test suite plus a module-level `problem` pytest fixture.
-`tests/test_CPSE.py` and `tests/test_CPSETimepoints.py` subclass `CommonTests`
-(overriding `engine_name` / `engine_class`) so the same tests run against each
-engine. Each test module re-imports the `problem` fixture
-(`from .CommonTests import CommonTests, problem  # noqa: F401`) — that import is
-**required** for pytest fixture discovery; do not let `ruff --fix` remove it.
+shared test suite. `tests/test_CPSE.py` and `tests/test_CPSETimepoints.py`
+subclass `CommonTests` (overriding `engine_name` / `engine_class`) so the same
+tests run against each engine. The shared `problem` pytest fixture lives in
+`tests/conftest.py`, so pytest auto-discovers it for every test module — no
+import needed in the test files.
 
 ## Conventions and gotchas
 

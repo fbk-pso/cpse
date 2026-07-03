@@ -15,13 +15,25 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
+from unified_planning.environment import get_environment
+from unified_planning.model import ClosedTimeInterval, MinimizeMakespan, Timing
 from unified_planning.model.scheduling import SchedulingProblem
-from unified_planning.shortcuts import *
+from unified_planning.shortcuts import (
+    GT,
+    LT,
+    And,
+    BoolType,
+    Equals,
+    IntType,
+    Not,
+    Or,
+    Times,
+    UserType,
+)
 
 from cpse import CPSE
 
-# `problem` is a pytest fixture; importing it here registers it for this module.
-from .CommonTests import CommonTests, problem  # noqa: F401
+from .CommonTests import CommonTests
 
 
 class TestCPSE(CommonTests):

@@ -19,14 +19,39 @@ from abc import abstractmethod
 
 import pytest
 from unified_planning.engines import PlanGenerationResult, PlanGenerationResultStatus
+from unified_planning.environment import get_environment
+from unified_planning.model import (
+    ClosedTimeInterval,
+    GlobalStartTiming,
+    LeftOpenTimeInterval,
+    MinimizeMakespan,
+    MinimizeSequentialPlanLength,
+    OpenTimeInterval,
+    RightOpenTimeInterval,
+    TimeInterval,
+    Timepoint,
+    TimePointInterval,
+    TimepointKind,
+    Timing,
+)
 from unified_planning.model.scheduling import Activity, SchedulingProblem
 from unified_planning.plans import Schedule
-from unified_planning.shortcuts import *
-
-
-@pytest.fixture
-def problem() -> SchedulingProblem:
-    return SchedulingProblem("test")
+from unified_planning.shortcuts import (
+    LE,
+    And,
+    BoolType,
+    Equals,
+    Iff,
+    Implies,
+    IntType,
+    Minus,
+    Not,
+    OneshotPlanner,
+    Or,
+    Plus,
+    Times,
+    UserType,
+)
 
 
 def are_activities_overlapped(plan: Schedule, activities: list[Activity]) -> bool:
