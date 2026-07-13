@@ -60,7 +60,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [build]
     runs-on: ubuntu-latest
-    environment: pypi
+    environment: pypi-cpse
     permissions:
       id-token: write
     steps:
