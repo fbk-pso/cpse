@@ -171,6 +171,9 @@ The rest of this file covers operations that need push or merge rights on the re
 
 ### Cutting a release
 
+Run `just bump 0.2.0`, then run the git commands it prints. This automates the
+manual steps below:
+
 1. Bump `version` in [pyproject.toml](pyproject.toml).
 2. Refresh the lock file:
    ```bash

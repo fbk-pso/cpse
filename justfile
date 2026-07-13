@@ -33,6 +33,12 @@ precommit:
 build:
     uv build
 
+# Set the version, refresh the lock file, and print the release commands
+bump version:
+    sed -i 's/^version = ".*"/version = "{{version}}"/' pyproject.toml
+    uv lock
+    @echo "Now: git commit -am 'release: v{{version}}' && git tag v{{version}} && git push --follow-tags"
+
 # Remove build, cache, and tooling artifacts
 clean:
     rm -rf build/ dist/ .mypy_cache/ .pytest_cache/ .ruff_cache/ *.egg-info src/*.egg-info

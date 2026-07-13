@@ -98,6 +98,7 @@ import needed in the test files.
 - Formatting/linting is **ruff** (line length 88); type checking is **mypy**,
   configured in `pyproject.toml`. Four tests are `@pytest.mark.skip`-ed because
   CP-SAT is too slow on them with the pinned ortools.
-- Releases: bump `version` in `pyproject.toml`, `uv lock`, commit, tag `vX.Y.Z`,
-  push. A tag triggers PyPI publish via Trusted Publishing; `main` merges
-  produce a rolling `dev` pre-release. See `.github/workflows/`.
+- Releases: `just bump X.Y.Z` sets `version` in `pyproject.toml` and runs
+  `uv lock`, then prints the commit/tag/push commands to run. A `vX.Y.Z` tag
+  triggers PyPI publish via Trusted Publishing; `main` merges produce a rolling
+  `dev` pre-release. See `.github/workflows/`.
