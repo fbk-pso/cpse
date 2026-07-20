@@ -56,14 +56,14 @@ from unified_planning.shortcuts import (
 from cpse.CPSEBaseEngine import CPSEBaseEngine
 
 
-def are_activities_overlapped(plan: Schedule, activities: list[Activity]) -> bool:
+def are_activities_overlapped(schedule: Schedule, activities: list[Activity]) -> bool:
     def start_time(activity):
-        return plan.get(activity.start).constant_value()
+        return schedule.get(activity.start).constant_value()
 
     sorted_activities = sorted(activities, key=start_time)
     for i in range(1, len(sorted_activities)):
-        end_prev = plan.get(sorted_activities[i - 1].end).constant_value()
-        start = plan.get(sorted_activities[i].start).constant_value()
+        end_prev = schedule.get(sorted_activities[i - 1].end).constant_value()
+        start = schedule.get(sorted_activities[i].start).constant_value()
         if end_prev > start:
             return True
     return False
@@ -80,20 +80,20 @@ class EngineContractTests(ABC):
 
     def _solve(self, problem: SchedulingProblem) -> PlanGenerationResult:
         with OneshotPlanner(name=self.engine_name()) as planner:
-            res = planner.solve(problem)
+            res: PlanGenerationResult = planner.solve(problem)
             return res
+        raise Exception(f"{self.engine_name()} engine cannot be loaded")
 
     def problem_solved_satisficing_or_optimally(
         self, problem: SchedulingProblem
-    ) -> PlanGenerationResult:
+    ) -> Schedule:
         res = self._solve(problem)
         assert res.status in [
             PlanGenerationResultStatus.SOLVED_SATISFICING,
             PlanGenerationResultStatus.SOLVED_OPTIMALLY,
         ]
-        assert res.plan is not None
         assert isinstance(res.plan, Schedule)
-        return res
+        return res.plan
 
     def problem_unsolvable(self, problem: SchedulingProblem) -> PlanGenerationResult:
         res = self._solve(problem)
@@ -152,16 +152,16 @@ class EngineContractTests(ABC):
         activity3 = problem.add_activity("activity3", duration=1)
         activity3.uses(resource, 1)
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert not are_activities_overlapped(res.plan, res.plan.activities)
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert not are_activities_overlapped(schedule, schedule.activities)
 
     def test_set_activity_duration_bounds(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=1)
         activity.set_duration_bounds(10, 14)
         activity.add_constraint(Equals(activity.start, 0))
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity.start).constant_value() == 0
-        assert 10 <= res.plan.get(activity.end).constant_value() <= 14
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity.start).constant_value() == 0
+        assert 10 <= schedule.get(activity.end).constant_value() <= 14
 
     def test_activity_duration_as_parameter_exp1(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=5)
@@ -171,10 +171,10 @@ class EngineContractTests(ABC):
         problem.add_constraint(Equals(int_var, 5))
         activity.set_fixed_duration(Times(int_var, 2))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
         assert (
-            res.plan.get(activity.end).constant_value()
-            - res.plan.get(activity.start).constant_value()
+            schedule.get(activity.end).constant_value()
+            - schedule.get(activity.start).constant_value()
         ) == 10
 
     def test_activity_duration_as_parameter_exp2(self, problem: SchedulingProblem):
@@ -186,9 +186,9 @@ class EngineContractTests(ABC):
         problem.add_constraint(Equals(int_var, 5))
         activity.set_duration_bounds(Times(int_var, 2), Times(int_var, 3))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity.start).constant_value() == 0
-        assert 10 <= res.plan.get(activity.end).constant_value() <= 15
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity.start).constant_value() == 0
+        assert 10 <= schedule.get(activity.end).constant_value() <= 15
 
     def test_activity_deadline_and_release_date(self, problem: SchedulingProblem):
         activity1 = problem.add_activity("activity1", duration=5)
@@ -196,11 +196,11 @@ class EngineContractTests(ABC):
         activity1.add_deadline(Plus(activity2.end, 3))
         activity1.add_release_date(Minus(activity2.start, 3))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        activity1_start = res.plan.get(activity1.start).constant_value()
-        activity1_end = res.plan.get(activity1.end).constant_value()
-        activity2_start = res.plan.get(activity2.start).constant_value()
-        activity2_end = res.plan.get(activity2.end).constant_value()
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        activity1_start = schedule.get(activity1.start).constant_value()
+        activity1_end = schedule.get(activity1.end).constant_value()
+        activity2_start = schedule.get(activity2.start).constant_value()
+        activity2_end = schedule.get(activity2.end).constant_value()
         assert (activity2_start - 3) <= activity1_start
         assert activity1_end <= (activity2_end + 3)
 
@@ -224,9 +224,9 @@ class EngineContractTests(ABC):
             "int_var", get_environment().type_manager.IntType()
         )
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert isinstance(res.plan.get(bool_var).constant_value(), bool)
-        assert res.plan.get(int_var).constant_value() >= 0
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert isinstance(schedule.get(bool_var).constant_value(), bool)
+        assert schedule.get(int_var).constant_value() >= 0
 
     def test_activity_parameters(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=1)
@@ -238,9 +238,9 @@ class EngineContractTests(ABC):
             "int_var", get_environment().type_manager.IntType()
         )
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert isinstance(res.plan.get(bool_var).constant_value(), bool)
-        assert res.plan.get(int_var).constant_value() >= 0
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert isinstance(schedule.get(bool_var).constant_value(), bool)
+        assert schedule.get(int_var).constant_value() >= 0
 
     def test_bounded_int_parameters(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=1)
@@ -254,9 +254,9 @@ class EngineContractTests(ABC):
             get_environment().type_manager.IntType(lower_bound=20, upper_bound=21),
         )
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert 10 <= res.plan.get(int_var1).constant_value() <= 11
-        assert 20 <= res.plan.get(int_var2).constant_value() <= 21
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert 10 <= schedule.get(int_var1).constant_value() <= 11
+        assert 20 <= schedule.get(int_var2).constant_value() <= 21
 
     def test_problem_constraints(self, problem: SchedulingProblem):
         activity1 = problem.add_activity("activity1", duration=1)
@@ -282,11 +282,11 @@ class EngineContractTests(ABC):
         )
         problem.add_constraint(Equals(activity1.end, activity2.start))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity1_first).constant_value()
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity1_first).constant_value()
         assert (
-            res.plan.get(activity1.end).constant_value()
-            == res.plan.get(activity2.start).constant_value()
+            schedule.get(activity1.end).constant_value()
+            == schedule.get(activity2.start).constant_value()
         )
 
     def test_activity_constraints(self, problem: SchedulingProblem):
@@ -313,11 +313,11 @@ class EngineContractTests(ABC):
         )
         activity2.add_constraint(Equals(activity1.end, activity2.start))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity1_first).constant_value()
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity1_first).constant_value()
         assert (
-            res.plan.get(activity1.end).constant_value()
-            == res.plan.get(activity2.start).constant_value()
+            schedule.get(activity1.end).constant_value()
+            == schedule.get(activity2.start).constant_value()
         )
 
     def test_problem_effects(self, problem: SchedulingProblem):
@@ -327,8 +327,8 @@ class EngineContractTests(ABC):
         problem.add_decrease_effect(activity.start, resource, 1)
         problem.add_increase_effect(10, resource, 1)
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity.start).constant_value() <= 10
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity.start).constant_value() <= 10
 
     def test_activity_effects(self, problem: SchedulingProblem):
         resource = problem.add_resource("resource", capacity=4)
@@ -354,7 +354,7 @@ class EngineContractTests(ABC):
         activity = problem.add_activity("activity", duration=20)
 
         problem.add_decrease_effect(activity.start, resource, 2)
-        problem.add_increase_effect(activity.start, resource, 1)
+        problem.add_increase_effect(Timing(0, activity.start), resource, 1)
 
         self.problem_solved_satisficing_or_optimally(problem)
 
@@ -366,12 +366,15 @@ class EngineContractTests(ABC):
         activity2 = problem.add_activity("activity2", duration=20)
 
         problem.add_increase_effect(
-            activity1.start, resource, 1, condition=LE(10, activity1.start)
+            Timing(0, activity1.start),
+            resource,
+            1,
+            condition=LE(10, activity1.start),
         )
         problem.add_decrease_effect(activity2.start, resource, 1)
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity1.start).constant_value() >= 10
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity1.start).constant_value() >= 10
 
     def test_problem_conditions(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=10)
@@ -417,11 +420,11 @@ class EngineContractTests(ABC):
                 is_left_open=True,
                 is_right_open=False,
             ),
-            bool_var,
+            problem.environment.expression_manager.ParameterExp(bool_var),
         )
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert 5 <= res.plan.get(int_var).constant_value() <= 10
-        assert res.plan.get(bool_var).constant_value()
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert 5 <= schedule.get(int_var).constant_value() <= 10
+        assert schedule.get(bool_var).constant_value()
 
     def test_activity_conditions(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=10)
@@ -463,9 +466,9 @@ class EngineContractTests(ABC):
         )
 
         problem.add_constraint(Implies(And(LE(1, int_var), LE(int_var, 20)), bool_var))
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert 5 <= res.plan.get(int_var).constant_value() <= 10
-        assert res.plan.get(bool_var).constant_value()
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert 5 <= schedule.get(int_var).constant_value() <= 10
+        assert schedule.get(bool_var).constant_value()
 
     def test_minimize_makespan(self, problem: SchedulingProblem):
         resource = problem.add_resource("resource", capacity=1)
@@ -479,9 +482,9 @@ class EngineContractTests(ABC):
 
         problem.add_quality_metric(MinimizeMakespan())
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
         for activity in activities:
-            assert res.plan.get(activity.end).constant_value() <= (
+            assert schedule.get(activity.end).constant_value() <= (
                 num_activities * duration
             )
 
@@ -570,7 +573,7 @@ class EngineContractTests(ABC):
 
         # activity1.uses(machine, 1)
         problem.add_decrease_effect(activity1.start, machine, 1)
-        problem.add_increase_effect(activity1.end, machine, 1)
+        problem.add_increase_effect(Timing(0, activity1.end), machine, 1)
 
         problem.add_constraint(Equals(activity2.end, activity3.start))
 
@@ -590,12 +593,12 @@ class EngineContractTests(ABC):
         # minimizing makespan, activity1 should be the first activity
         problem.add_quality_metric(MinimizeMakespan())
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity1_before_activity2).constant_value()
-        assert res.plan.get(activity2_before_activity3).constant_value()
-        assert res.plan.get(activity3.end).constant_value() == 19
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity1_before_activity2).constant_value()
+        assert schedule.get(activity2_before_activity3).constant_value()
+        assert schedule.get(activity3.end).constant_value() == 19
         assert not are_activities_overlapped(
-            res.plan, [activity1, activity2, activity3]
+            schedule, [activity1, activity2, activity3]
         )
 
     def test_not_supported_parameter_type(self, problem: SchedulingProblem):
