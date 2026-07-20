@@ -41,10 +41,10 @@ from unified_planning.shortcuts import (
 
 from cpse import CPSETimepoints
 
-from .CommonTests import CommonTests
+from .EngineContractTests import EngineContractTests
 
 
-class TestCPSETimepoints(CommonTests):
+class TestCPSETimepoints(EngineContractTests):
     def engine_name(self):
         return "cpse-timepoints"
 
@@ -95,8 +95,6 @@ class TestCPSETimepoints(CommonTests):
         problem.add_constraint(Equals(activity.start, 0))
 
         res = self.problem_solved_satisficing_or_optimally(problem)
-        print(res.plan.get(activity.start).constant_value())
-        print(res.plan.get(activity.end).constant_value())
         assert res.plan.get(activity.start).constant_value() == 0
         assert res.plan.get(activity.end).constant_value() == 20
 

@@ -80,12 +80,12 @@ invoked through `OneshotPlanner(name="cpse")`. Configurable params: `lower_bound
 
 ### Tests
 
-`tests/CommonTests.py` defines a `CommonTests` base class holding the entire
-shared test suite. `tests/test_CPSE.py` and `tests/test_CPSETimepoints.py`
-subclass `CommonTests` (overriding `engine_name` / `engine_class`) so the same
-tests run against each engine. The shared `problem` pytest fixture lives in
-`tests/conftest.py`, so pytest auto-discovers it for every test module — no
-import needed in the test files.
+`tests/EngineContractTests.py` defines an `EngineContractTests` base class
+holding the entire shared test suite. `tests/test_CPSE.py` and
+`tests/test_CPSETimepoints.py` subclass `EngineContractTests` (overriding
+`engine_name` / `engine_class`) so the same tests run against each engine. The
+shared `problem` pytest fixture lives in `tests/conftest.py`, so pytest
+auto-discovers it for every test module — no import needed in the test files.
 
 ## Conventions and gotchas
 

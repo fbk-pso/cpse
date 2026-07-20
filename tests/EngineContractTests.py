@@ -15,7 +15,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 #
 
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
 import pytest
 from unified_planning.engines import PlanGenerationResult, PlanGenerationResultStatus
@@ -53,6 +53,8 @@ from unified_planning.shortcuts import (
     UserType,
 )
 
+from cpse.CPSEBaseEngine import CPSEBaseEngine
+
 
 def are_activities_overlapped(plan: Schedule, activities: list[Activity]) -> bool:
     def start_time(activity):
@@ -67,53 +69,46 @@ def are_activities_overlapped(plan: Schedule, activities: list[Activity]) -> boo
     return False
 
 
-class CommonTests:
+class EngineContractTests(ABC):
     @abstractmethod
     def engine_name(self) -> str:
         pass
 
     @abstractmethod
-    def engine_class(self):
+    def engine_class(self) -> type[CPSEBaseEngine]:
         pass
+
+    def _solve(self, problem: SchedulingProblem) -> PlanGenerationResult:
+        with OneshotPlanner(name=self.engine_name()) as planner:
+            res = planner.solve(problem)
+            return res
 
     def problem_solved_satisficing_or_optimally(
         self, problem: SchedulingProblem
     ) -> PlanGenerationResult:
-        with OneshotPlanner(name=self.engine_name()) as planner:
-            res = planner.solve(problem)
-            print(res)
-            print(res.log_messages)
-            assert res.status in [
-                PlanGenerationResultStatus.SOLVED_SATISFICING,
-                PlanGenerationResultStatus.SOLVED_OPTIMALLY,
-            ]
-            assert res.plan is not None
-            assert isinstance(res.plan, Schedule)
-            return res
-        raise Exception(f"{self.engine_name()} engine cannot be loaded")
+        res = self._solve(problem)
+        assert res.status in [
+            PlanGenerationResultStatus.SOLVED_SATISFICING,
+            PlanGenerationResultStatus.SOLVED_OPTIMALLY,
+        ]
+        assert res.plan is not None
+        assert isinstance(res.plan, Schedule)
+        return res
 
     def problem_unsolvable(self, problem: SchedulingProblem) -> PlanGenerationResult:
-        with OneshotPlanner(name=self.engine_name()) as planner:
-            res = planner.solve(problem)
-            print(res)
-            print(res.log_messages)
-            assert res.status in [
-                PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY,
-                PlanGenerationResultStatus.UNSOLVABLE_PROVEN,
-            ]
-            assert res.plan is None
-            return res
-        raise Exception(f"{self.engine_name()} engine cannot be loaded")
+        res = self._solve(problem)
+        assert res.status in [
+            PlanGenerationResultStatus.UNSOLVABLE_INCOMPLETELY,
+            PlanGenerationResultStatus.UNSOLVABLE_PROVEN,
+        ]
+        assert res.plan is None
+        return res
 
     def problem_unsupported(self, problem: SchedulingProblem) -> PlanGenerationResult:
-        with OneshotPlanner(name=self.engine_name()) as planner:
-            res = planner.solve(problem)
-            print(res)
-            print(res.log_messages)
-            assert res.status == PlanGenerationResultStatus.UNSUPPORTED_PROBLEM
-            assert res.plan is None
-            return res
-        raise Exception(f"{self.engine_name()} engine cannot be loaded")
+        res = self._solve(problem)
+        assert res.status == PlanGenerationResultStatus.UNSUPPORTED_PROBLEM
+        assert res.plan is None
+        return res
 
     def test_new_engine(self):
         planner = self.engine_class()(lower_bound=1, upper_bound=2)
