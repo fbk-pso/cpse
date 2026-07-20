@@ -32,7 +32,6 @@ from unified_planning.model import (
     timing,
 )
 from unified_planning.model.scheduling import Activity, SchedulingProblem
-from unified_planning.shortcuts import Minus, Plus
 
 from .CPSEBaseEngine import CPSEBaseEngine
 
@@ -1240,9 +1239,17 @@ class CPSETimepoints(CPSEBaseEngine):
 
                     # sum values of different effects that occur at the same timepoint
                     if eff.is_increase():
-                        sum_inc_dec_effects = Plus(sum_inc_dec_effects, eff.value)
+                        sum_inc_dec_effects = (
+                            problem.environment.expression_manager.Plus(
+                                sum_inc_dec_effects, eff.value
+                            )
+                        )
                     else:
-                        sum_inc_dec_effects = Minus(sum_inc_dec_effects, eff.value)
+                        sum_inc_dec_effects = (
+                            problem.environment.expression_manager.Minus(
+                                sum_inc_dec_effects, eff.value
+                            )
+                        )
 
                 if sum_inc_dec_effects != 0:
                     self.add_effect(
