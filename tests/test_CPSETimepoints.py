@@ -95,8 +95,6 @@ class TestCPSETimepoints(EngineContractTests):
         problem.add_constraint(Equals(activity.start, 0))
 
         res = self.problem_solved_satisficing_or_optimally(problem)
-        print(res.plan.get(activity.start).constant_value())
-        print(res.plan.get(activity.end).constant_value())
         assert res.plan.get(activity.start).constant_value() == 0
         assert res.plan.get(activity.end).constant_value() == 20
 
