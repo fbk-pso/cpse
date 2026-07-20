@@ -20,7 +20,6 @@ import unified_planning as up
 from ortools.sat.python import cp_model
 from unified_planning.model import Effect, FNode, ProblemKind, timing
 from unified_planning.model.scheduling import Activity, SchedulingProblem
-from unified_planning.shortcuts import And
 
 from .CPSEBaseEngine import CPSEBaseEngine
 
@@ -158,7 +157,11 @@ class CPSE(CPSEBaseEngine):
             bool_var: cp_model.IntVar | cp_model.NotBooleanVariable | bool
             if eff.is_conditional():
                 if activity is not None and activity.optional:
-                    bool_var = self.add_constraint(And(activity.present, eff.condition))
+                    bool_var = self.add_constraint(
+                        problem.environment.expression_manager.And(
+                            activity.present, eff.condition
+                        )
+                    )
                 else:
                     bool_var = self.add_constraint(eff.condition)
             else:
