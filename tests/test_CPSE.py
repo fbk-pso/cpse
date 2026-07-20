@@ -18,7 +18,6 @@
 from unified_planning.environment import get_environment
 from unified_planning.model import ClosedTimeInterval, MinimizeMakespan, Timing
 from unified_planning.model.scheduling import SchedulingProblem
-from unified_planning.plans import Schedule
 from unified_planning.shortcuts import (
     GT,
     LT,
@@ -57,9 +56,8 @@ class TestCPSE(EngineContractTests):
 
         problem.add_quality_metric(MinimizeMakespan())
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert isinstance(res.plan, Schedule)
-        assert activity2 in res.plan.activities and activity1 not in res.plan.activities
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert activity2 in schedule.activities and activity1 not in schedule.activities
 
     def test_constraints_with_optional_activities(self, problem: SchedulingProblem):
         activity1 = problem.add_activity("activity1", 10, optional=True)
@@ -83,11 +81,10 @@ class TestCPSE(EngineContractTests):
         activity1.add_constraint(LT(int_var, 5))
         activity2.add_constraint(GT(int_var, 5))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert isinstance(res.plan, Schedule)
-        assert activity1 in res.plan.activities and activity2 not in res.plan.activities
-        assert res.plan.get(int_var).constant_value() < 5
-        assert res.plan.get(bool_var).constant_value()
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert activity1 in schedule.activities and activity2 not in schedule.activities
+        assert schedule.get(int_var).constant_value() < 5
+        assert schedule.get(bool_var).constant_value()
 
     def test_effects_with_optional_activities(self, problem: SchedulingProblem):
         activity1 = problem.add_activity("activity1", 10, optional=True)
@@ -132,10 +129,9 @@ class TestCPSE(EngineContractTests):
             GT(int_var, 5),
         )
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert isinstance(res.plan, Schedule)
-        assert activity1 in res.plan.activities and activity2 not in res.plan.activities
-        assert res.plan.get(int_var).constant_value() < 5
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert activity1 in schedule.activities and activity2 not in schedule.activities
+        assert schedule.get(int_var).constant_value() < 5
 
     def test_not_supported_assign_effect(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=5)
@@ -166,7 +162,8 @@ class TestCPSE(EngineContractTests):
         resource = problem.add_resource("resource", 10)
         problem.add_constraint(LT(1, resource))
         problem.add_condition(
-            ClosedTimeInterval(activity.start, activity.end), LT(1, resource)
+            ClosedTimeInterval(Timing(0, activity.start), Timing(0, activity.end)),
+            LT(1, resource),
         )
 
         self.problem_unsupported(problem)
@@ -177,7 +174,7 @@ class TestCPSE(EngineContractTests):
             get_environment().type_manager.IntType(lower_bound=-1, upper_bound=11),
         )
         activity = problem.add_activity("activity", 5)
-        problem.add_increase_effect(activity.start, fluent, 1)
+        problem.add_increase_effect(Timing(0, activity.start), fluent, 1)
         self.problem_unsupported(problem)
 
     def test_not_supported_fluent_initial_value_as_fluent_exp(
