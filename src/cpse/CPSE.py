@@ -163,7 +163,11 @@ class CPSE(CPSEBaseEngine):
                     bool_var = self.add_constraint(eff.condition)
             else:
                 if activity is not None and activity.optional:
-                    bool_var = self.fnode_to_value_or_variable(activity.present)  # type: ignore[assignment]
+                    presence_var = self.fnode_to_value_or_variable(activity.present)
+                    assert isinstance(
+                        presence_var, (cp_model.IntVar, cp_model.NotBooleanVariable)
+                    )
+                    bool_var = presence_var
                 else:
                     bool_var = True
 

@@ -540,7 +540,7 @@ class CPSETimepoints(CPSEBaseEngine):
             self._variables_cache[tp_i_j_are_equal_key] = are_timepoints_equal
             self._variables_cache[tp_j_i_are_equal_key] = are_timepoints_equal
 
-        return self._variables_cache[tp_i_j_are_equal_key]  # type: ignore[return-value]
+        return self._variables_cache[tp_i_j_are_equal_key]
 
     def timepoints_setup(self, problem: SchedulingProblem):
         """
@@ -1068,7 +1068,7 @@ class CPSETimepoints(CPSEBaseEngine):
                     if effect.is_assignment():
                         resource_equality = resource_var == value_var
                     else:
-                        resource_equality = resource_var == (prev_var + value_var)  # type: ignore
+                        resource_equality = resource_var == (prev_var + value_var)
 
                     constraints: list[cp_model.Constraint] = []
                     if fluent_assignment_var is None:
@@ -1355,7 +1355,7 @@ class CPSETimepoints(CPSEBaseEngine):
                         tp_GE_start.negated()
                     )
                     self._variables_cache[tp_GE_start_key] = tp_GE_start
-                tp_GE_start = self._variables_cache[tp_GE_start_key]  # type: ignore[assignment]
+                tp_GE_start = self._variables_cache[tp_GE_start_key]
 
                 tp_LE_end_key = f"{self.timepoints[i].name} <= {end!r}"
                 if tp_LE_end_key not in self._variables_cache:
@@ -1365,7 +1365,7 @@ class CPSETimepoints(CPSEBaseEngine):
                         tp_LE_end.negated()
                     )
                     self._variables_cache[tp_LE_end_key] = tp_LE_end
-                tp_LE_end = self._variables_cache[tp_LE_end_key]  # type: ignore[assignment]
+                tp_LE_end = self._variables_cache[tp_LE_end_key]
 
                 # if the next timepoint value is equal then the constraint should not be
                 # enforced
