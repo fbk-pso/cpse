@@ -18,6 +18,7 @@
 import itertools
 from collections import defaultdict
 from collections.abc import Iterable
+from typing import cast
 
 import unified_planning as up
 from ortools.sat.python import cp_model
@@ -166,18 +167,19 @@ class CPSETimepoints(CPSEBaseEngine):
         )
         lower = activity.duration.lower
         upper = activity.duration.upper
+        duration_var: int | cp_model.IntVar
         if lower.is_int_constant() and upper.is_int_constant():
-            lower = lower.int_constant_value()
-            upper = upper.int_constant_value()
-            if lower == upper:
+            lower_val = lower.int_constant_value()
+            upper_val = upper.int_constant_value()
+            if lower_val == upper_val:
                 # FixedDuration
-                duration_var = upper
+                duration_var = upper_val
             else:
                 # ClosedDurationInterval
                 duration_var = self.model.new_int_var(
                     self.lower_bound, self.upper_bound, "duration_" + activity.name
                 )
-                self.model.add_linear_constraint(duration_var, lower, upper)
+                self.model.add_linear_constraint(duration_var, lower_val, upper_val)
         else:
             duration_var = self.model.new_int_var(
                 self.lower_bound, self.upper_bound, "duration_" + activity.name
@@ -287,22 +289,28 @@ class CPSETimepoints(CPSEBaseEngine):
 
         for fnode in problem.all_constraints():
             for fnode_timing in self._fnode_timings(fnode):
+                assert isinstance(fnode_timing.delay, int)
                 problem_timings.add((fnode_timing.timepoint, fnode_timing.delay))
 
         for time_interval, fnode, _activity in problem.all_conditions():
+            assert isinstance(time_interval.lower.delay, int)
             problem_timings.add(
                 (time_interval.lower.timepoint, time_interval.lower.delay)
             )
+            assert isinstance(time_interval.upper.delay, int)
             problem_timings.add(
                 (time_interval.upper.timepoint, time_interval.upper.delay)
             )
             for fnode_timing in self._fnode_timings(fnode):
+                assert isinstance(fnode_timing.delay, int)
                 problem_timings.add((fnode_timing.timepoint, fnode_timing.delay))
 
         for effect_timing, effect, _activity in problem.all_effects():
+            assert isinstance(effect_timing.delay, int)
             problem_timings.add((effect_timing.timepoint, effect_timing.delay))
             if effect.is_conditional():
                 for fnode_timing in self._fnode_timings(effect.condition):
+                    assert isinstance(fnode_timing.delay, int)
                     problem_timings.add((fnode_timing.timepoint, fnode_timing.delay))
 
         return list(problem_timings)
@@ -742,7 +750,9 @@ class CPSETimepoints(CPSEBaseEngine):
             # fluent expression
             self.model.add_exactly_one(fluent_assignment_vars)
 
-    def ground_fluent_exp(self, fluent_exp: FNode) -> Iterable[FNode]:
+    def ground_fluent_exp(
+        self, fluent_exp: FNode
+    ) -> Iterable[tuple[FNode, cp_model.IntVar | None]]:
         """
         Yields the ground version of a fluent expression and its associated
         assignment variable, if applicable.
@@ -774,7 +784,13 @@ class CPSETimepoints(CPSEBaseEngine):
 
     def add_no_effect_constraints(
         self,
-        fluent_effects: dict[FNode, dict["timing.Timing", dict[str, list[Effect]]]],
+        fluent_effects: dict[
+            FNode,
+            dict[
+                "timing.Timing",
+                dict[str, list[tuple[Effect, cp_model.IntVar | None]]],
+            ],
+        ],
         condition_vars: dict[Effect, cp_model.IntVar | cp_model.NotBooleanVariable],
     ):
         """
@@ -787,7 +803,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
         Args:
             fluent_effects (Dict[FNode, Dict["timing.Timing", Dict[str,
-            List[Effect]]]]):
+            List[Tuple[Effect, Optional[cp_model.IntVar]]]]]]):
                 A nested dictionary mapping fluent expressions to their effects at
                 specific timepoints.
             condition_vars (Dict[Effect, Union[cp_model.IntVar,
@@ -807,10 +823,13 @@ class CPSETimepoints(CPSEBaseEngine):
                     cp_model.IntVar | cp_model.NotBooleanVariable
                 ] = []
                 for effect_timing in fluent_effects[fluent_exp]:
+                    assert isinstance(effect_timing.delay, int)
                     timing_at_tpi = self.assignment_matrix[
                         (effect_timing.timepoint, effect_timing.delay)
                     ][i]
-                    second_level_disjunctive_vars = []
+                    second_level_disjunctive_vars: list[
+                        cp_model.IntVar | cp_model.NotBooleanVariable
+                    ] = []
                     for _eff, fluent_assignment_var in fluent_effects[fluent_exp][
                         effect_timing
                     ]["non_conditional"]:
@@ -858,7 +877,13 @@ class CPSETimepoints(CPSEBaseEngine):
 
     def add_assign_effect_constraints(
         self,
-        fluent_effects: dict[FNode, dict["timing.Timing", dict[str, list[Effect]]]],
+        fluent_effects: dict[
+            FNode,
+            dict[
+                "timing.Timing",
+                dict[str, list[tuple[Effect, cp_model.IntVar | None]]],
+            ],
+        ],
         condition_vars: dict[Effect, cp_model.IntVar | cp_model.NotBooleanVariable],
     ):
         """
@@ -867,7 +892,7 @@ class CPSETimepoints(CPSEBaseEngine):
 
         Args:
             fluent_effects (Dict[FNode, Dict["timing.Timing", Dict[str,
-            List[Effect]]]]):
+            List[Tuple[Effect, Optional[cp_model.IntVar]]]]]]):
                 A nested dictionary mapping fluent expressions to their effects at
                 specific timepoints.
             condition_vars (Dict[Effect, Union[cp_model.IntVar,
@@ -887,8 +912,11 @@ class CPSETimepoints(CPSEBaseEngine):
                     if not e1.is_assignment():
                         continue
 
-                    if fluent_assignment_var1 is None:
-                        fluent_assignment_var1 = True
+                    assignment_var1: cp_model.IntVar | bool = (
+                        True
+                        if fluent_assignment_var1 is None
+                        else fluent_assignment_var1
+                    )
 
                     for t2 in fluent_effects[fluent_exp]:
                         for e2, fluent_assignment_var2 in (
@@ -898,8 +926,11 @@ class CPSETimepoints(CPSEBaseEngine):
                             if t1 == t2 or (t1, t2) in constrained_timepoints:
                                 continue
 
-                            if fluent_assignment_var2 is None:
-                                fluent_assignment_var2 = True
+                            assignment_var2: cp_model.IntVar | bool = (
+                                True
+                                if fluent_assignment_var2 is None
+                                else fluent_assignment_var2
+                            )
 
                             condition_var1: (
                                 cp_model.IntVar | cp_model.NotBooleanVariable | bool
@@ -917,13 +948,15 @@ class CPSETimepoints(CPSEBaseEngine):
                             else:
                                 condition_var2 = True
 
+                            assert isinstance(t1.delay, int)
+                            assert isinstance(t2.delay, int)
                             self.model.add(
                                 (self._model_vars[t1.timepoint] + t1.delay)
                                 != (self._model_vars[t2.timepoint] + t2.delay)
                             ).only_enforce_if(
                                 [
-                                    fluent_assignment_var1,
-                                    fluent_assignment_var2,
+                                    assignment_var1,
+                                    assignment_var2,
                                     condition_var1,
                                     condition_var2,
                                 ]
@@ -932,8 +965,8 @@ class CPSETimepoints(CPSEBaseEngine):
                             if all(
                                 isinstance(v, bool)
                                 for v in [
-                                    fluent_assignment_var1,
-                                    fluent_assignment_var2,
+                                    assignment_var1,
+                                    assignment_var2,
                                     condition_var1,
                                     condition_var2,
                                 ]
@@ -986,6 +1019,7 @@ class CPSETimepoints(CPSEBaseEngine):
             condition_var = self.add_constraint(effect.condition)
             condition_vars[effect] = condition_var
 
+        assert isinstance(timing.delay, int)
         for i, timing_at_tpi in enumerate(
             self.assignment_matrix[(timing.timepoint, timing.delay)]
         ):
@@ -1114,7 +1148,13 @@ class CPSETimepoints(CPSEBaseEngine):
         self.add_parametric_fluents_constraints(problem)
 
         # map each fluent to its effects
-        fluent_effects: dict[FNode, dict[timing.Timing, dict[str, list[Effect]]]] = {}
+        fluent_effects: dict[
+            FNode,
+            dict[
+                timing.Timing,
+                dict[str, list[tuple[Effect, cp_model.IntVar | None]]],
+            ],
+        ] = {}
         for fluent_exp in self.resources:
             fluent_effects[fluent_exp] = {}
 
@@ -1169,7 +1209,8 @@ class CPSETimepoints(CPSEBaseEngine):
         condition_vars: dict[Effect, cp_model.IntVar | cp_model.NotBooleanVariable] = {}
         for fluent_exp in fluent_effects:
             for effect_timing in fluent_effects[fluent_exp]:
-                sum_inc_dec_effects = 0
+                assert isinstance(effect_timing.delay, int)
+                sum_inc_dec_effects: int | FNode = 0
                 idx = 0
                 for eff, fluent_assignment_var in fluent_effects[fluent_exp][
                     effect_timing
@@ -1211,7 +1252,7 @@ class CPSETimepoints(CPSEBaseEngine):
                         idx,
                         condition_vars,
                         fluent_assignment_var,
-                        value=sum_inc_dec_effects,
+                        value=cast(FNode, sum_inc_dec_effects),
                     )
 
                 idx = min(
