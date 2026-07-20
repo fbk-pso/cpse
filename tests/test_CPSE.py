@@ -18,6 +18,7 @@
 from unified_planning.environment import get_environment
 from unified_planning.model import ClosedTimeInterval, MinimizeMakespan, Timing
 from unified_planning.model.scheduling import SchedulingProblem
+from unified_planning.plans import Schedule
 from unified_planning.shortcuts import (
     GT,
     LT,
@@ -57,9 +58,8 @@ class TestCPSE(CommonTests):
         problem.add_quality_metric(MinimizeMakespan())
 
         res = self.problem_solved_satisficing_or_optimally(problem)
-        present1 = res.plan.get(activity1.present.presence()).constant_value()
-        present2 = res.plan.get(activity2.present.presence()).constant_value()
-        assert present2 and not present1
+        assert isinstance(res.plan, Schedule)
+        assert activity2 in res.plan.activities and activity1 not in res.plan.activities
 
     def test_constraints_with_optional_activities(self, problem: SchedulingProblem):
         activity1 = problem.add_activity("activity1", 10, optional=True)
@@ -84,10 +84,8 @@ class TestCPSE(CommonTests):
         activity2.add_constraint(GT(int_var, 5))
 
         res = self.problem_solved_satisficing_or_optimally(problem)
-
-        present1 = res.plan.get(activity1.present.presence()).constant_value()
-        present2 = res.plan.get(activity2.present.presence()).constant_value()
-        assert present1 and not present2
+        assert isinstance(res.plan, Schedule)
+        assert activity1 in res.plan.activities and activity2 not in res.plan.activities
         assert res.plan.get(int_var).constant_value() < 5
         assert res.plan.get(bool_var).constant_value()
 
@@ -135,10 +133,8 @@ class TestCPSE(CommonTests):
         )
 
         res = self.problem_solved_satisficing_or_optimally(problem)
-
-        present1 = res.plan.get(activity1.present.presence()).constant_value()
-        present2 = res.plan.get(activity2.present.presence()).constant_value()
-        assert present1 and not present2
+        assert isinstance(res.plan, Schedule)
+        assert activity1 in res.plan.activities and activity2 not in res.plan.activities
         assert res.plan.get(int_var).constant_value() < 5
 
     def test_not_supported_assign_effect(self, problem: SchedulingProblem):

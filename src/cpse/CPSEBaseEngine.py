@@ -22,7 +22,7 @@ import traceback
 import warnings
 from abc import abstractmethod
 from collections.abc import Callable, Iterable
-from typing import IO, Optional
+from typing import IO, Optional, cast
 
 import unified_planning as up
 from ortools.sat.python import cp_model
@@ -32,6 +32,7 @@ from unified_planning.engines import (
     PlanGenerationResultStatus,
 )
 from unified_planning.engines.mixins import OptimalityGuarantee
+from unified_planning.engines.results import LogLevel, LogMessage
 from unified_planning.model import (
     Fluent,
     FNode,
@@ -44,7 +45,7 @@ from unified_planning.model import (
 )
 from unified_planning.model.metrics import MinimizeMakespan
 from unified_planning.model.scheduling import Activity, SchedulingProblem
-from unified_planning.model.types import Type, is_compatible_type
+from unified_planning.model.types import Type, _IntType, is_compatible_type
 from unified_planning.plans import Schedule
 
 credits = Credits(
@@ -113,8 +114,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         # mapping timepoints, parameters and fluents to the corresponding integer
         # variables in the model
         self._model_vars: dict[
-            timing.Timepoint | Parameter | Fluent | Presence,
-            cp_model.IntVar | int,
+            timing.Timepoint | Parameter | Fluent | Presence | FNode | bool,
+            cp_model.IntVar | cp_model.BoolVarT | int,
         ] = {}
         # mapping fluent to its lower bound and upper bound
         self._fluent_bounds: dict[str, tuple[int, int]] = {}
@@ -407,6 +408,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         lower_delay = 0
         if time_interval.lower.delay != 0:
+            assert isinstance(time_interval.lower.delay, int)
             lower_delay += time_interval.lower.delay
         if time_interval.is_left_open():
             lower_delay += 1
@@ -416,6 +418,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         upper_delay = 0
         if time_interval.upper.delay != 0:
+            assert isinstance(time_interval.upper.delay, int)
             upper_delay += time_interval.upper.delay
         if time_interval.is_right_open():
             upper_delay -= 1
@@ -442,12 +445,13 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         """
 
         if fluent.type.is_int_type():
-            lower_bound = fluent.type.lower_bound
-            if fluent.type.lower_bound is None:
+            fluent_type = cast(_IntType, fluent.type)
+            lower_bound = fluent_type.lower_bound
+            if lower_bound is None:
                 lower_bound = self.lower_bound
 
-            upper_bound = fluent.type.upper_bound
-            if fluent.type.upper_bound is None:
+            upper_bound = fluent_type.upper_bound
+            if upper_bound is None:
                 upper_bound = self.upper_bound
 
         elif fluent.type.is_bool_type():
@@ -517,15 +521,16 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             if param.type.is_bool_type():
                 var = self.model.new_bool_var(param.name)
             elif param.type.is_int_type():
+                param_type = cast(_IntType, param.type)
                 lb = (
                     self.lower_bound
-                    if param.type.lower_bound is None
-                    else param.type.lower_bound
+                    if param_type.lower_bound is None
+                    else param_type.lower_bound
                 )
                 ub = (
                     self.upper_bound
-                    if param.type.upper_bound is None
-                    else param.type.upper_bound
+                    if param_type.upper_bound is None
+                    else param_type.upper_bound
                 )
                 var = self.model.new_int_var(lb, ub, param.name)
             elif param.type.is_user_type():
@@ -615,18 +620,19 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
         )
         lower = activity.duration.lower
         upper = activity.duration.upper
+        duration_var: int | cp_model.IntVar
         if lower.is_int_constant() and upper.is_int_constant():
-            lower = lower.int_constant_value()
-            upper = upper.int_constant_value()
-            if lower == upper:
+            lower_val = lower.int_constant_value()
+            upper_val = upper.int_constant_value()
+            if lower_val == upper_val:
                 # FixedDuration
-                duration_var = upper
+                duration_var = upper_val
             else:
                 # ClosedDurationInterval
                 duration_var = self.model.new_int_var(
                     self.lower_bound, self.upper_bound, "duration_" + activity.name
                 )
-                self.model.add_linear_constraint(duration_var, lower, upper)
+                self.model.add_linear_constraint(duration_var, lower_val, upper_val)
         else:
             duration_var = self.model.new_int_var(
                 self.lower_bound, self.upper_bound, "duration_" + activity.name
@@ -725,10 +731,10 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 results.append(self._model_vars[fnode])
 
             elif fnode.is_bool_constant():
-                results.append(self._model_vars[fnode.constant_value()])
+                results.append(self._model_vars[fnode.bool_constant_value()])
 
             elif fnode.is_int_constant():
-                results.append(fnode.constant_value())
+                results.append(fnode.int_constant_value())
 
             elif fnode.node_type in _ARITHMETIC_OPERATOR_MAP:
                 if not processed:
@@ -954,6 +960,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
         try:
             self.check_if_supported_problem(problem)
+            assert isinstance(problem, SchedulingProblem)
 
             if heuristic is not None:
                 # stacklevel=2 targets _solve's caller; it can't reliably reach user
@@ -962,7 +969,8 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                     "CPSE does not support custom heuristics", UserWarning, stacklevel=2
                 )
 
-            self.model.name = problem.name
+            if problem.name is not None:
+                self.model.name = problem.name
 
             self.process_objects(problem)
             self.process_fluents(problem)
@@ -993,7 +1001,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
             true_const = self.model.new_bool_var("true")
             self.model.add_bool_and(true_const)
             self._model_vars[True] = true_const
-            self._model_vars[False] = true_const.negated()  # type: ignore[assignment]
+            self._model_vars[False] = true_const.negated()
 
             # add problem-specific and activity-related effects to the model
             self.add_effects(problem)
@@ -1032,9 +1040,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
 
             if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
                 # map a decision variable to its solution value
-                assignment: dict[
-                    Parameter | Presence | timing.Timepoint, bool | int
-                ] = {}
+                assignment: dict[Parameter | timing.Timepoint, bool | int | Object] = {}
                 for up_var, cp_var in self._model_vars.items():
                     # map a boolean parameter to its boolean value rather than the
                     # integer value returned by the solver
@@ -1050,10 +1056,6 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                         else:
                             assignment[up_var] = solver.value(cp_var)
 
-                    elif isinstance(up_var, Presence):
-                        assert solver.value(cp_var) in [0, 1]
-                        assignment[up_var] = solver.value(cp_var) == 1
-
                     elif isinstance(up_var, timing.Timepoint) and up_var not in [
                         global_start,
                         global_end,
@@ -1061,15 +1063,17 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                         assignment[up_var] = solver.value(cp_var)
 
                 # filter optional activities not present in the plan
-                activities = list(
+                activities: list[Activity] = list(
                     filter(
-                        lambda act: (
-                            not act.optional or assignment[act.present.presence()]
+                        lambda act: bool(
+                            not act.optional
+                            or solver.value(self._model_vars[act.present.presence()])
+                            == 1
                         ),
                         problem.activities,
                     )
                 )
-                plan = Schedule(activities, assignment, problem.environment)
+                plan = Schedule(activities, cast(dict, assignment), problem.environment)
 
                 if status == cp_model.OPTIMAL and len(problem.quality_metrics) > 0:
                     result_status = PlanGenerationResultStatus.SOLVED_OPTIMALLY
@@ -1106,7 +1110,7 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 PlanGenerationResultStatus.UNSUPPORTED_PROBLEM,
                 plan=None,
                 engine_name=self.name,
-                log_messages=e,
+                log_messages=[LogMessage(LogLevel.ERROR, str(e))],
             )
 
         except Exception:
@@ -1114,5 +1118,5 @@ class CPSEBaseEngine(up.engines.Engine, up.engines.mixins.OneshotPlannerMixin):
                 PlanGenerationResultStatus.INTERNAL_ERROR,
                 plan=None,
                 engine_name=self.name,
-                log_messages=traceback.format_exc(),
+                log_messages=[LogMessage(LogLevel.ERROR, traceback.format_exc())],
             )

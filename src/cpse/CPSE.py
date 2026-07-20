@@ -20,6 +20,7 @@ import unified_planning as up
 from ortools.sat.python import cp_model
 from unified_planning.model import Effect, FNode, ProblemKind, timing
 from unified_planning.model.scheduling import Activity, SchedulingProblem
+from unified_planning.shortcuts import And
 
 from .CPSEBaseEngine import CPSEBaseEngine
 
@@ -69,22 +70,21 @@ class CPSE(CPSEBaseEngine):
         if not problem.discrete_time:
             raise NotImplementedError("Continuous time not supported.")
 
-        parametric_fluent_exps = list(
-            filter(
-                lambda e: self._fluent_exp_contains_parameters(e[1].fluent),
-                problem.all_effects(),
-            )
+        num_parametric_fluent_exps = sum(
+            1
+            for _timing, eff, _activity in problem.all_effects()
+            if self._fluent_exp_contains_parameters(eff.fluent)
         )
         for fnode, _scope in problem.all_scoped_constraints():
-            parametric_fluent_exps += list(
+            num_parametric_fluent_exps += len(
                 self.extract_all_parametric_fluent_exp_from_fnode(fnode)
             )
         for _time_interval, fnode, _activity in problem.all_conditions():
-            parametric_fluent_exps += list(
+            num_parametric_fluent_exps += len(
                 self.extract_all_parametric_fluent_exp_from_fnode(fnode)
             )
 
-        if len(parametric_fluent_exps) > 0:
+        if num_parametric_fluent_exps > 0:
             raise NotImplementedError("Fluents with parameters are not supported.")
 
     def add_constraints(self, problem: SchedulingProblem):
@@ -158,9 +158,7 @@ class CPSE(CPSEBaseEngine):
             bool_var: cp_model.IntVar | cp_model.NotBooleanVariable | bool
             if eff.is_conditional():
                 if activity is not None and activity.optional:
-                    bool_var = self.add_constraint(
-                        up.shortcuts.And(activity.present, eff.condition)
-                    )
+                    bool_var = self.add_constraint(And(activity.present, eff.condition))
                 else:
                     bool_var = self.add_constraint(eff.condition)
             else:
@@ -178,11 +176,12 @@ class CPSE(CPSEBaseEngine):
                     f"Fluent '{fluent_exp}' must be initialized with a constant value "
                     "of type integer or boolean."
                 )
-            init_value = self._fluent_initial_value[fluent_exp]
-            if init_value.is_int_constant():
-                init_value = init_value.int_constant_value()
-            elif init_value.is_bool_constant():
-                if not init_value.bool_constant_value():
+            init_value_exp = self._fluent_initial_value[fluent_exp]
+            init_value: int
+            if init_value_exp.is_int_constant():
+                init_value = init_value_exp.int_constant_value()
+            elif init_value_exp.is_bool_constant():
+                if not init_value_exp.bool_constant_value():
                     init_value = 0
                 else:
                     init_value = 1
@@ -193,7 +192,7 @@ class CPSE(CPSEBaseEngine):
                 )
 
             times: list[cp_model.LinearExprT] = [0]
-            values = [init_value]
+            values: list[int] = [init_value]
             actives: list[cp_model.IntVar | cp_model.NotBooleanVariable | bool] = [True]
             for effect_timing, value, active in fluent_effects[fluent_exp]:
                 times.append(self._convert_timing_to_linear_expr(effect_timing))
@@ -237,6 +236,7 @@ class CPSE(CPSEBaseEngine):
 
         start_delay = 0
         if time_interval.lower.delay != 0:
+            assert isinstance(time_interval.lower.delay, int)
             start_delay += time_interval.lower.delay
         if time_interval.is_left_open():
             start_delay += 1
@@ -247,6 +247,7 @@ class CPSE(CPSEBaseEngine):
         # but we want the constraint to be enforced also at the end
         end_delay = 1
         if time_interval.upper.delay != 0:
+            assert isinstance(time_interval.upper.delay, int)
             end_delay += time_interval.upper.delay
         if time_interval.is_right_open():
             end_delay -= 1
