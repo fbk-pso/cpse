@@ -67,7 +67,7 @@ def are_activities_overlapped(plan: Schedule, activities: list[Activity]) -> boo
     return False
 
 
-class CommonTests:
+class EngineContractTests:
     @abstractmethod
     def engine_name(self) -> str:
         pass

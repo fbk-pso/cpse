@@ -41,10 +41,10 @@ from unified_planning.shortcuts import (
 
 from cpse import CPSETimepoints
 
-from .CommonTests import CommonTests
+from .EngineContractTests import EngineContractTests
 
 
-class TestCPSETimepoints(CommonTests):
+class TestCPSETimepoints(EngineContractTests):
     def engine_name(self):
         return "cpse-timepoints"
 

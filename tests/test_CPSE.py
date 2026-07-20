@@ -33,10 +33,10 @@ from unified_planning.shortcuts import (
 
 from cpse import CPSE
 
-from .CommonTests import CommonTests
+from .EngineContractTests import EngineContractTests
 
 
-class TestCPSE(CommonTests):
+class TestCPSE(EngineContractTests):
     def engine_name(self):
         return "cpse"
 
