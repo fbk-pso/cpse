@@ -60,10 +60,10 @@ class TestCPSETimepoints(CommonTests):
         )
         activity.set_fixed_duration(Times(fluent, 2))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
         assert (
-            res.plan.get(activity.end).constant_value()
-            - res.plan.get(activity.start).constant_value()
+            schedule.get(activity.end).constant_value()
+            - schedule.get(activity.start).constant_value()
         ) == 10
 
     def test_activity_duration_as_fluent_exp2(self, problem: SchedulingProblem):
@@ -76,9 +76,9 @@ class TestCPSETimepoints(CommonTests):
         problem.add_constraint(Equals(activity.start, 0))
         activity.set_duration_bounds(Times(fluent, 2), Times(fluent, 3))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity.start).constant_value() == 0
-        assert 10 <= res.plan.get(activity.end).constant_value() <= 15
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity.start).constant_value() == 0
+        assert 10 <= schedule.get(activity.end).constant_value() <= 15
 
     def test_activity_duration_with_parametric_fluents(
         self, problem: SchedulingProblem
@@ -90,15 +90,16 @@ class TestCPSETimepoints(CommonTests):
             "fluent", IntType(), obj=user_type, default_initial_value=10
         )
         problem.add_object("o1", user_type)
-        activity = problem.add_activity("activity", duration=Plus(fluent(param), 10))
+        activity = problem.add_activity("activity")
+        activity.set_fixed_duration(Plus(fluent(param), 10))
 
         problem.add_constraint(Equals(activity.start, 0))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        print(res.plan.get(activity.start).constant_value())
-        print(res.plan.get(activity.end).constant_value())
-        assert res.plan.get(activity.start).constant_value() == 0
-        assert res.plan.get(activity.end).constant_value() == 20
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        print(schedule.get(activity.start).constant_value())
+        print(schedule.get(activity.end).constant_value())
+        assert schedule.get(activity.start).constant_value() == 0
+        assert schedule.get(activity.end).constant_value() == 20
 
     def test_activity_set_duration_bounds_with_parametric_fluents(
         self, problem: SchedulingProblem
@@ -116,9 +117,9 @@ class TestCPSETimepoints(CommonTests):
 
         problem.add_constraint(Equals(activity.start, 0))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity.start).constant_value() == 0
-        assert 10 <= res.plan.get(activity.end).constant_value() <= 20
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity.start).constant_value() == 0
+        assert 10 <= schedule.get(activity.end).constant_value() <= 20
 
     def test_constraint_on_resource(self, problem: SchedulingProblem):
         problem.add_activity("activity", duration=1)
@@ -139,7 +140,7 @@ class TestCPSETimepoints(CommonTests):
         activity1.add_effect(activity1.end, resource, 2)
 
         activity2.add_decrease_effect(activity2.start, resource, 2)
-        problem.add_increase_effect(activity2.end, resource, 4)
+        problem.add_increase_effect(Timing(0, activity2.end), resource, 4)
 
         activity3.add_decrease_effect(activity3.start, resource, 4)
 
@@ -170,9 +171,9 @@ class TestCPSETimepoints(CommonTests):
 
         problem.add_quality_metric(MinimizeMakespan())
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity2.start).constant_value() == (
-            res.plan.get(activity1.start).constant_value() + 5 + 1
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity2.start).constant_value() == (
+            schedule.get(activity1.start).constant_value() + 5 + 1
         )
 
     def test_effect_with_value_expression(self, problem: SchedulingProblem):
@@ -216,7 +217,9 @@ class TestCPSETimepoints(CommonTests):
         activity2 = problem.add_activity("activity2", duration=5)
         problem.add_constraint(LE(activity1.end, activity2.start))
 
-        problem.add_increase_effect(activity1.start, resource1, Times(resource2, 1))
+        problem.add_increase_effect(
+            Timing(0, activity1.start), resource1, Times(resource2, 1)
+        )
         problem.add_effect(activity1.end, resource1, Times(resource2, 2))
         activity2.uses(resource1, 2)
 
@@ -232,7 +235,10 @@ class TestCPSETimepoints(CommonTests):
         activity2 = problem.add_activity("activity2", duration=30)
 
         problem.add_increase_effect(
-            activity1.start, resource1, 1, condition=Equals(activity1.start, 10)
+            Timing(0, activity1.start),
+            resource1,
+            1,
+            condition=Equals(activity1.start, 10),
         )
         problem.add_decrease_effect(activity2.start, resource1, 1)
 
@@ -243,15 +249,15 @@ class TestCPSETimepoints(CommonTests):
 
         problem.add_quality_metric(MinimizeMakespan())
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity1.start).constant_value() == 10
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity1.start).constant_value() == 10
 
     def test_conditional_effects_with_fluent_expression(
         self, problem: SchedulingProblem
     ):
         fluent1 = problem.add_fluent("fluent1", IntType(), default_initial_value=1)
         fluent2 = problem.add_fluent(
-            "fluent2", IntType(), default_initial_value=fluent1
+            "fluent2", IntType(), default_initial_value=fluent1()
         )
 
         activity = problem.add_activity("activity", duration=20)
@@ -261,12 +267,15 @@ class TestCPSETimepoints(CommonTests):
             activity.start, fluent1, Times(fluent2, 2), condition=LT(activity.start, 10)
         )
         problem.add_increase_effect(
-            activity.start, fluent1, Times(fluent2, 2), condition=GE(activity.start, 10)
+            Timing(0, activity.start),
+            fluent1,
+            Times(fluent2, 2),
+            condition=GE(activity.start, 10),
         )
         problem.add_quality_metric(MinimizeMakespan())
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(activity.start).constant_value() == 10
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(activity.start).constant_value() == 10
 
     def test_condition_with_ClosedTimeInterval(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=10)
@@ -286,8 +295,8 @@ class TestCPSETimepoints(CommonTests):
             Equals(resource, 1),
         )
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(int_var).constant_value() == 5
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(int_var).constant_value() == 5
 
     def test_condition_with_TimePointInterval(self, problem: SchedulingProblem):
         resource = problem.add_resource("resource", capacity=2)
@@ -305,8 +314,8 @@ class TestCPSETimepoints(CommonTests):
             TimePointInterval(Timing(0, activity.start)),
             Equals(resource, 1),
         )
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(int_var).constant_value() == 5
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(int_var).constant_value() == 5
 
     def test_condition_forcing_equal_timepoint_values(self, problem: SchedulingProblem):
         activity1 = problem.add_activity("activity1", duration=10)
@@ -372,8 +381,8 @@ class TestCPSETimepoints(CommonTests):
             Equals(resource, 1),
         )
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(int_var).constant_value() == 4
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(int_var).constant_value() == 4
 
     def test_int_fluents(self, problem: SchedulingProblem):
         busy = problem.add_fluent(
@@ -393,10 +402,10 @@ class TestCPSETimepoints(CommonTests):
 
         problem.add_constraint(LE(activity2.end, activity1.start))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
         assert (
-            res.plan.get(activity2.end).constant_value()
-            <= res.plan.get(activity1.start).constant_value()
+            schedule.get(activity2.end).constant_value()
+            <= schedule.get(activity1.start).constant_value()
         )
 
     def test_bool_fluents(self, problem: SchedulingProblem):
@@ -415,10 +424,10 @@ class TestCPSETimepoints(CommonTests):
 
         problem.add_constraint(LE(activity2.end, activity1.start))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
         assert (
-            res.plan.get(activity2.end).constant_value()
-            <= res.plan.get(activity1.start).constant_value()
+            schedule.get(activity2.end).constant_value()
+            <= schedule.get(activity1.start).constant_value()
         )
 
     def test_fluents_with_parameters(self, problem: SchedulingProblem):
@@ -460,8 +469,8 @@ class TestCPSETimepoints(CommonTests):
 
         problem.add_constraint(Equals(param1, o2))
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(param1).constant_value() == o2
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(param1).constant_value() == o2
 
     def test_fluents_with_parameters_and_conditions(self, problem: SchedulingProblem):
         activity = problem.add_activity("activity", duration=5)
@@ -510,11 +519,11 @@ class TestCPSETimepoints(CommonTests):
             Iff(GT(fluent(param1, param2), 6), Not(final_value_is_6))
         )
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(param1).constant_value() == o2
-        assert res.plan.get(param2).constant_value() == o3
-        assert res.plan.get(param3).constant_value() == o3
-        assert res.plan.get(final_value_is_6).constant_value() is True
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(param1).constant_value() == o2
+        assert schedule.get(param2).constant_value() == o3
+        assert schedule.get(param3).constant_value() == o3
+        assert schedule.get(final_value_is_6).constant_value() is True
 
     def test_constraint_and_condition_with_multiple_parametric_fluents(
         self, problem: SchedulingProblem
@@ -565,9 +574,9 @@ class TestCPSETimepoints(CommonTests):
             ),
         )
 
-        res = self.problem_solved_satisficing_or_optimally(problem)
-        assert res.plan.get(param1).constant_value() == o1
-        assert res.plan.get(param2).constant_value() == o3
+        schedule = self.problem_solved_satisficing_or_optimally(problem)
+        assert schedule.get(param1).constant_value() == o1
+        assert schedule.get(param2).constant_value() == o3
 
     def test_effects_with_parametric_fluents(self, problem: SchedulingProblem):
         activity1 = problem.add_activity("activity1", duration=5)
@@ -644,7 +653,9 @@ class TestCPSETimepoints(CommonTests):
         resource1 = problem.add_fluent(
             "resource1",
             get_environment().type_manager.IntType(lower_bound=-1, upper_bound=11),
-            default_initial_value=variable,
+            default_initial_value=(
+                problem.environment.expression_manager.ParameterExp(variable)
+            ),
         )
         problem.add_constraint(LE(0, resource1))
 
