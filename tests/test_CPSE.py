@@ -205,7 +205,6 @@ class TestCPSE(EngineContractTests):
         fluent = problem.add_fluent(
             "fluent", IntType(), obj=user_type, default_initial_value=0
         )
-        problem.set_initial_value(fluent(parameter), 1)
 
         activity = problem.add_activity("activity", 2)
         activity.add_increase_effect(activity.start, fluent(parameter), 1)
