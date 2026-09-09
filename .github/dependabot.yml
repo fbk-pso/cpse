@@ -1,6 +1,10 @@
 version: 2
 updates:
   # Python deps from pyproject.toml / uv.lock.
+  #
+  # unified-planning is ignored below. It is declared as a git URL, but
+  # Dependabot's uv updater version-checks it against PyPI rather than the git
+  # repository. The bump-unified-planning workflow tracks master commits instead.
   - package-ecosystem: uv
     directory: /
     schedule:
@@ -19,6 +23,9 @@ updates:
       python-dependencies:
         patterns:
           - "*"
+    ignore:
+      # Handled by the bump-unified-planning workflow.
+      - dependency-name: "unified-planning"
 
   # Pinned action versions in .github/workflows/. Batched into a single PR per
   # week to cut review noise.
