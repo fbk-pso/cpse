@@ -10,16 +10,26 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   bump:
     runs-on: ubuntu-latest
 
     steps:
+      # The org disallows GITHUB_TOKEN from creating pull requests, so use a
+      # GitHub App installation token instead.
+      - name: Generate a GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.RELEASER_APP_ID }}
+          private-key: ${{ secrets.RELEASER_APP_PRIVATE_KEY }}
+
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -30,7 +40,7 @@ jobs:
 
       - name: Open or update the bump pull request
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           if git diff --quiet uv.lock; then
             echo "unified-planning master has not moved; nothing to do."
@@ -42,8 +52,8 @@ jobs:
           short=${sha:0:8}
           title="deps(deps-dev): bump unified-planning to $short"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           git checkout -B deps/unified-planning
           git commit -am "$title"
           git push --force origin deps/unified-planning
